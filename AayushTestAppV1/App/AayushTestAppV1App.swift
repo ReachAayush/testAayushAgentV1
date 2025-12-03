@@ -1,10 +1,3 @@
-//
-//  AayushTestAppV1App.swift
-//  AayushTestAppV1
-//
-//  Created by Aayush Agarwal on 12/2/25.
-//
-
 import SwiftUI
 
 @main

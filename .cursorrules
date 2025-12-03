@@ -1,0 +1,100 @@
+# Aayush Agent - Codebase Context for LLMs
+
+## Project Overview
+iOS app built with SwiftUI that uses Amazon Bedrock LLM for personalized messaging and calendar management. Follows enterprise-grade architecture with clear separation of concerns.
+
+## Architecture Principles
+
+### 1. Protocol-Oriented Design
+- All actions conform to `AgentAction` protocol
+- Services are injected via dependency injection
+- No global state (except singleton services where appropriate)
+
+### 2. Layer Architecture
+```
+UI Layer (SwiftUI Views)
+    ↓
+Controller Layer (AgentController, MessagingController)
+    ↓
+Action Layer (AgentAction implementations)
+    ↓
+Service Layer (LLMClient, CalendarClient, MessagesClient)
+```
+
+### 3. File Organization
+```
+AayushTestAppV1/
+├── App/                    # App entry point (AayushTestAppV1App.swift, ContentView.swift)
+├── Core/                   # Core protocols (AgentAction.swift)
+├── Services/              # External integrations (LLMClient, CalendarClient, MessagesClient)
+├── Controllers/           # Business logic coordinators (AgentController, MessagingController)
+├── Features/
+│   ├── Actions/          # Action implementations (GoodMorningMessageAction, etc.)
+│   └── Views/            # Feature-specific UI (GoodMorningView, etc.)
+├── UI/                    # Shared UI components (HomeView, SteelersTheme, etc.)
+└── Stores/               # State management (FavoriteContactsStore, ToneProfileStore)
+```
+
+## Key Conventions
+
+### Adding New Actions
+1. Create struct conforming to `AgentAction` in `Features/Actions/`
+2. Add case to `HomeView.ActionType` enum
+3. Add `ActionCard` in `HomeView`
+4. Add case to `fullScreenCover` switch in `HomeView`
+5. Create corresponding view in `Features/Views/`
+
+### Dependency Injection
+- All services initialized in `ContentView.init()`
+- Services passed to controllers and actions
+- No global singletons (except `MessagingController.shared` for UIKit interop)
+
+### Async/Await
+- All service calls use async/await
+- Controllers marked with `@MainActor` for UI updates
+- Errors propagated via `throws`
+
+### State Management
+- `@StateObject` for owned state
+- `@ObservedObject` for passed state
+- `@Published` properties for reactive updates
+
+## Design System
+- **Theme**: Pittsburgh Steelers (black, gold)
+- **Colors**: Defined in `SteelersTheme.swift`
+- **Components**: Reusable cards, buttons, gradients
+
+## Security Notes
+- ⚠️ API keys currently hardcoded in `ContentView.swift` (NOT production-ready)
+- Should be moved to `Info.plist` or keychain
+- TODO: Create `ConfigurationService` to centralize config management
+
+## Common Patterns
+
+### Action Execution Flow
+1. User interaction in View
+2. View creates `AgentAction` instance
+3. View calls `agent.run(action:)`
+4. Controller executes action and updates `@Published` state
+5. UI automatically updates via SwiftUI reactivity
+
+### Error Handling
+- Services throw descriptive errors
+- Actions propagate errors
+- Controllers catch and update `errorMessage`
+- Views display errors to user
+
+## Important Files
+- `ContentView.swift`: Dependency injection point
+- `AgentController.swift`: Main orchestration
+- `HomeView.swift`: Navigation hub
+- `LLMClient.swift`: Bedrock API integration
+- `SteelersTheme.swift`: Design system
+
+## When Modifying Code
+- Follow existing patterns (don't introduce new architectures)
+- Maintain separation of concerns
+- Use dependency injection (don't create new singletons)
+- Keep async/await patterns consistent
+- Update documentation if adding new features
+
