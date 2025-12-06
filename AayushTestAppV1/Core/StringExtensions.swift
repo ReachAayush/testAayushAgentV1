@@ -1,3 +1,11 @@
+//
+//  StringExtensions.swift
+//  AayushTestAppV1
+//
+//  Created on 2024
+//  Copyright © 2024. All rights reserved.
+//
+
 import Foundation
 
 /// String extension providing common string manipulation utilities.

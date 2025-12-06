@@ -10,27 +10,24 @@ This app follows a **modular, scalable architecture** designed for easy extensio
 
 ## 🎯 Key Features
 
-### 1. **Good Morning Messages**
-- Generate personalized morning messages using LLM
+### 1. **Hello Messages**
+- Generate personalized greeting messages using LLM
+- Timezone-aware greetings (morning, afternoon, evening)
 - Support for multiple contacts with custom style hints
-- Tone profile integration for consistent messaging style
+- Per-contact relationship context and tone preferences
 
 ### 2. **Calendar Integration**
 - View today's schedule from multiple calendars
-- AI-powered day summaries
+- AI-powered schedule summaries
 - Calendar selection and filtering
+- Full calendar access with iOS 17+ support
 
-### 3. **Text Response Assistant** (NEW)
-- Analyze recently received messages
-- Generate contextually appropriate responses
-- Support for multiple conversation threads
+### 3. **Transit Directions**
+- Get directions to PATH train stations
+- Location-based nearest station finder
+- Google Maps integration for navigation
 
-### 4. **Tone Training**
-- Train the AI on your messaging style
-- Generate tone profiles from sample messages
-- Apply tone profiles across all actions
-
-### 5. **Favorite Contacts**
+### 4. **Favorite Contacts**
 - Manage frequently messaged contacts
 - Per-contact style customization
 - Quick access to personalized actions
@@ -39,9 +36,9 @@ This app follows a **modular, scalable architecture** designed for easy extensio
 
 ### Prerequisites
 
-- Xcode 15.0+
-- iOS 17.0+ (with fallback to iOS 16.0+)
-- Amazon Bedrock API key and endpoint
+- Xcode 15.0+ (Xcode 26.1+ recommended)
+- iOS 18.7+ (deployment target)
+- Amazon Bedrock credentials (AWS Access Key, Secret Key, Region) OR OpenAI-compatible gateway API key
 - Active Apple Developer account (for device testing)
 
 ### Configuration
@@ -52,8 +49,10 @@ This app follows a **modular, scalable architecture** designed for easy extensio
    - Select your model ID (e.g., `openai.gpt-oss-20b-1:0`)
 
 2. **Update Configuration**
-   - Edit `ContentView.swift` to add your Bedrock credentials
-   - ⚠️ **TODO**: See [`CONFIGURATION.md`](./CONFIGURATION.md) for recommended improvements
+   - Option A: Add credentials to `AppConfig.plist` (included in bundle)
+   - Option B: Add credentials to `Info.plist` (not tracked in git)
+   - Option C: Use runtime settings in the app (Settings → LLM Settings)
+   - See [`CONFIGURATION.md`](./CONFIGURATION.md) for detailed instructions
 
 3. **Permissions**
    - Calendar access (required for schedule features)
@@ -74,16 +73,15 @@ xcodebuild -project AayushTestAppV1.xcodeproj -scheme AayushTestAppV1 -destinati
 
 ### Home Screen
 The home screen serves as the central hub with action cards for:
-- **Good Morning**: Generate and send morning messages
-- **Today's Schedule**: View calendar events
-- **Summarize Day**: Get AI summary of your day
-- **Respond to Text**: Generate responses to recent messages (NEW)
+- **Hello**: Generate personalized greeting messages
+- **Today's Schedule**: View calendar events for today
+- **Transit Directions**: Get directions to PATH train stations
 
 ### Settings
 Access via toolbar icons:
-- **Calendar Settings**: Select which calendars to use
-- **Manage Favorites**: Add/edit favorite contacts
-- **Tone Trainer**: Train AI on your messaging style
+- **Calendar Settings** (calendar icon): Select which calendars to use
+- **Manage Favorites** (people icon): Add/edit favorite contacts
+- **LLM Settings** (key icon): Configure AWS credentials or API keys
 
 ## 🏛️ Architecture Principles
 
@@ -169,14 +167,17 @@ The app uses a **Pittsburgh Steelers** themed design system:
 ## 🔐 Security Considerations
 
 ### Current State
-- API keys are hardcoded in `ContentView.swift` (⚠️ **NOT PRODUCTION READY**)
+- ✅ AWS SigV4 signing implemented for Bedrock authentication
+- ✅ Runtime credential configuration via settings UI
+- ⚠️ Credentials stored in plaintext (AppConfig.plist, UserDefaults)
+- ⚠️ No keychain storage for sensitive credentials
 
 ### Recommended Improvements
-1. Move API keys to `Info.plist` or secure keychain
-2. Use environment variables for different builds
-3. Implement API key rotation
-4. Add request signing/authentication
-5. Encrypt sensitive user data
+See [`TECH_DEBT.md`](./TECH_DEBT.md) for detailed security improvements:
+1. Migrate credentials to iOS Keychain
+2. Implement credential encryption
+3. Add credential rotation mechanism
+4. Remove hardcoded credentials from source
 
 ## 🧪 Testing
 
@@ -197,10 +198,13 @@ xcodebuild test -project AayushTestAppV1.xcodeproj -scheme AayushTestAppV1 -dest
 
 ## 🐛 Known Issues
 
-1. **API Key Security**: Keys are hardcoded (see Security section)
-2. **Error Handling**: Some edge cases may need better UX
-3. **Offline Support**: No offline caching of generated messages
-4. **Message History**: Text response feature requires Messages app access
+See [`TECH_DEBT.md`](./TECH_DEBT.md) for comprehensive technical debt tracking.
+
+**Current Known Issues**:
+1. **Credential Security**: Credentials stored in plaintext (see Security section)
+2. **Deprecated Code**: Some deprecated components still in codebase
+3. **Error Handling**: Inconsistent error handling patterns
+4. **Test Coverage**: No unit or integration tests
 
 ## 🚧 Future Enhancements
 
@@ -214,12 +218,7 @@ xcodebuild test -project AayushTestAppV1.xcodeproj -scheme AayushTestAppV1 -dest
 - [ ] Cloud sync for contacts and preferences
 
 ### Technical Debt
-- [ ] Refactor API key management
-- [ ] Add comprehensive error handling
-- [ ] Implement proper logging
-- [ ] Add analytics
-- [ ] Performance optimization for large calendars
-- [ ] Accessibility improvements
+See [`TECH_DEBT.md`](./TECH_DEBT.md) for a comprehensive inventory of technical debt items, prioritized by impact and effort.
 
 ## 📚 Dependencies
 

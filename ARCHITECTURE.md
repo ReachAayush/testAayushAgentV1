@@ -134,16 +134,18 @@ This document describes the architecture of the Aayush Agent iOS app, following 
 ## Security Considerations
 
 ### Current State
-- ⚠️ API keys hardcoded in `ContentView.swift`
-- ⚠️ No encryption for sensitive data
-- ⚠️ No request signing
+- ✅ AWS SigV4 signing implemented for Bedrock authentication
+- ✅ Runtime credential configuration via settings UI
+- ✅ Support for both AWS credentials and Bearer tokens
+- ⚠️ Credentials stored in plaintext (AppConfig.plist, UserDefaults)
+- ⚠️ No keychain storage for sensitive credentials
 
 ### Recommended Improvements
-1. Move API keys to secure keychain
-2. Use environment variables for different builds
-3. Implement API key rotation
-4. Add request signing/authentication
-5. Encrypt sensitive user data at rest
+See [`TECH_DEBT.md`](./TECH_DEBT.md) for detailed security improvements:
+1. Migrate credentials to iOS Keychain
+2. Implement credential encryption
+3. Add credential rotation mechanism
+4. Remove hardcoded credentials from source
 
 ## Performance Considerations
 
@@ -217,6 +219,7 @@ final class MyService {
 ### Internal
 - No external package dependencies
 - All code is self-contained
+- Uses Swift CryptoKit for SigV4 signing (built-in framework)
 
 ## Future Enhancements
 
@@ -236,6 +239,20 @@ final class MyService {
 
 ---
 
-**Last Updated**: 2024
-**Maintained By**: Development Team
+## Technical Debt
+
+For a comprehensive inventory of technical debt items, prioritized by impact and effort, see [`TECH_DEBT.md`](./TECH_DEBT.md).
+
+**Key Areas**:
+- Credential management security
+- Deprecated code removal
+- Error handling improvements
+- Test coverage
+- Logging and observability
+
+---
+
+**Last Updated**: December 2024  
+**Maintained By**: Development Team  
+**Review Frequency**: Quarterly
 

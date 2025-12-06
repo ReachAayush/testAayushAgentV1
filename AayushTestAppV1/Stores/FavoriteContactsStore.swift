@@ -1,6 +1,18 @@
+//
+//  FavoriteContactsStore.swift
+//  AayushTestAppV1
+//
+//  Created on 2024
+//  Copyright © 2024. All rights reserved.
+//
+
 import Foundation
 import Combine
 
+/// Model representing a favorite contact with personalization settings.
+///
+/// **Purpose**: Stores contact information along with style hints and timezone
+/// preferences for personalized message generation.
 struct FavoriteContact: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
@@ -17,11 +29,20 @@ struct FavoriteContact: Codable, Identifiable, Equatable {
     }
 }
 
+/// Store for managing favorite contacts.
+///
+/// **Purpose**: Provides a centralized store for favorite contacts with their
+/// personalization settings. Currently uses hardcoded contacts, but designed
+/// to support persistence in the future.
+///
+/// **Architecture**: Observable object that publishes changes to contacts list.
+/// Used by views and actions that need access to favorite contacts.
 final class FavoriteContactsStore: ObservableObject {
     @Published var contacts: [FavoriteContact] = []
 
     init() {
         // Always use hardcoded contacts - no persistence, no customization
+        // TODO: Add persistence to UserDefaults or Core Data in future
         contacts = [
             FavoriteContact(
                 name: "Savannah Milford",
