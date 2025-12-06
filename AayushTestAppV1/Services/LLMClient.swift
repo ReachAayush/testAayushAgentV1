@@ -9,7 +9,7 @@ import Foundation
 /// - JSON schema enforcement for structured outputs
 ///
 /// **Architecture**: Service layer pattern - pure data access with no business logic.
-/// Used by actions like `GoodMorningMessageAction`, `SummarizeDayAction`, and `RespondToTextAction`.
+/// Used by actions like `HelloMessageAction`.
 ///
 /// **API Compatibility**: Uses Bedrock's OpenAI-compatible Chat Completions endpoint,
 /// making it compatible with standard OpenAI API patterns.
@@ -45,12 +45,6 @@ struct LLMMessagePayload: Decodable {
     let debug: String?
 }
 
-struct LLMTonePayload: Decodable {
-    let version: Int
-    let tone: String
-    let debug: String?
-}
-
 // MARK: - Client
 
 final class LLMClient {
@@ -59,25 +53,39 @@ final class LLMClient {
     private let model: String
     private let session: URLSession
     
+    // AWS credentials for SigV4 signing (optional - if provided, will use SigV4 instead of Bearer token)
+    private let awsAccessKey: String?
+    private let awsSecretKey: String?
+    private let awsRegion: String?
+    
     /// - Parameters:
-    ///   - apiKey: Your Amazon Bedrock bearer token.
+    ///   - apiKey: Your Amazon Bedrock bearer token (for OpenAI-compatible gateways) or can be empty if using AWS credentials
     ///   - baseURL: Bedrock OpenAI-compatible base URL, e.g.
     ///              https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1
     ///   - model: Bedrock model ID, e.g. "openai.gpt-oss-20b-1:0"
+    ///   - awsAccessKey: AWS access key for SigV4 signing (optional)
+    ///   - awsSecretKey: AWS secret key for SigV4 signing (optional)
+    ///   - awsRegion: AWS region (e.g., "us-west-2") for SigV4 signing (optional)
     init(
         apiKey: String,
         baseURL: URL,
         model: String,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        awsAccessKey: String? = nil,
+        awsSecretKey: String? = nil,
+        awsRegion: String? = nil
     ) {
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.model = model
         self.session = session
+        self.awsAccessKey = awsAccessKey
+        self.awsSecretKey = awsSecretKey
+        self.awsRegion = awsRegion
     }
     
-    /// Generates a short, warm "good morning" text to your girlfriend.
-    func generateGoodMorningMessage(
+    /// Generates a hello message with time-of-day awareness and a debug payload using a strict JSON schema.
+    func generateHelloMessagePayload(
         to name: String,
         styleHint: String? = nil
     ) async throws -> String {
@@ -115,9 +123,24 @@ final class LLMClient {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
+        
+        // Use SigV4 signing if AWS credentials are provided, otherwise use Bearer token
+        if let accessKey = awsAccessKey,
+           let secretKey = awsSecretKey,
+           let region = awsRegion {
+            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
+            request = try signer.sign(request)
+        } else if !apiKey.isEmpty {
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        } else {
+            throw NSError(
+                domain: "LLMClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Either AWS credentials (access key, secret key, region) or API key must be provided"]
+            )
+        }
         
         let (data, response) = try await session.data(for: request)
         
@@ -136,19 +159,45 @@ final class LLMClient {
         return sanitizeSingleMessage(raw)
     }
     
-    /// Generates a good morning message and a debug payload using a strict JSON schema.
-    func generateGoodMorningMessagePayload(
+    /// Generates a hello message with time-of-day awareness and a debug payload using a strict JSON schema.
+    func generateHelloMessagePayload(
         to name: String,
-        styleHint: String? = nil
+        styleHint: String? = nil,
+        timezoneIdentifier: String? = nil
     ) async throws -> (message: String, debug: String?, prompt: String) {
+        // Determine time of day based on timezone
+        let timeOfDayContext: String
+        if let tzID = timezoneIdentifier, let timezone = TimeZone(identifier: tzID) {
+            var calendar = Calendar.current
+            calendar.timeZone = timezone
+            let now = Date()
+            let hour = calendar.component(.hour, from: now)
+            
+            switch hour {
+            case 5..<12:
+                timeOfDayContext = "It's morning in their timezone (\(tzID))."
+            case 12..<17:
+                timeOfDayContext = "It's afternoon in their timezone (\(tzID))."
+            case 17..<21:
+                timeOfDayContext = "It's evening in their timezone (\(tzID))."
+            default:
+                timeOfDayContext = "It's late evening/night in their timezone (\(tzID))."
+            }
+        } else {
+            timeOfDayContext = ""
+        }
+        
         let needsNonRomantic = (styleHint ?? "").localizedCaseInsensitiveContains("avoid romantic language")
         let contextBlock = (styleHint ?? "").isEmpty ? "" : "\nCONTEXT:\n\(styleHint!)\n"
-        let prompt = """
-        You are composing a single, natural-sounding good morning text to a recipient named \(name).
+        let timeBlock = timeOfDayContext.isEmpty ? "" : "\nTIME CONTEXT:\n\(timeOfDayContext)\n"
         
-        Requirements:
+        let prompt = """
+        You are composing a single, natural-sounding hello/greeting text to a recipient named \(name).
+        
+        \(timeBlock)Requirements:
         - Output **EXACTLY ONE** message (not a list, not multiple variants).
         - Keep it **short (max ~25 words)**, warm, and personal.
+        - **Time-of-Day Rule:** Match the greeting to the time of day in their timezone. Use "Good morning" for morning, "Good afternoon" for afternoon, "Good evening" for evening, or just "Hey/Hi" for late night. Make it feel natural and contextually appropriate.
         - **Subtlety Rule:** Use the context for emotional tone and key themes, but **DO NOT directly quote or summarize** the factual details of the relationship. Make the text feel genuinely spontaneous.
         - **Nickname Rule:** Adhere strictly to the required terms of address specified in the context (e.g., 'Mom'/'Dad', 'baby girl', 'bro', etc.).
         - **Style Rule:** Keep the text punchy and natural, using a maximum of **one or two relevant emojis** only if they genuinely enhance the mood.
@@ -179,9 +228,24 @@ final class LLMClient {
         let url = baseURL.appendingPathComponent("chat/completions")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
+
+        // Use SigV4 signing if AWS credentials are provided, otherwise use Bearer token
+        if let accessKey = awsAccessKey,
+           let secretKey = awsSecretKey,
+           let region = awsRegion {
+            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
+            request = try signer.sign(request)
+        } else if !apiKey.isEmpty {
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        } else {
+            throw NSError(
+                domain: "LLMClient",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Either AWS credentials (access key, secret key, region) or API key must be provided"]
+            )
+        }
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -271,202 +335,5 @@ final class LLMClient {
     }
 }
 
-extension LLMClient {
-    /// Generates a friendly day summary from a plain-text schedule using a strict JSON schema.
-    func generateDaySummaryPayload(from eventsText: String, styleHint: String? = nil) async throws -> (message: String, debug: String?) {
-        let prompt = """
-        You are composing a short, friendly summary of my day based on the following schedule:\n\nSCHEDULE:\n\n\(eventsText)\n\nRequirements:\n- Output EXACTLY ONE short paragraph (max ~60 words), friendly and encouraging.\n- Avoid bullet points or lists; write as natural prose.\n- If there are no events, provide a gentle, positive note for a free day.\n\nReturn ONLY a single-line JSON object with this exact schema:\n{"version":1,"message":"<final summary to show>","debug":"<optional notes>"}\nDo not include any text before or after the JSON.\n\n\(styleHint ?? "")
-        """
 
-        let body = LLMRequest(
-            model: model,
-            messages: [
-                [
-                    "role": "system",
-                    "content": "Respond only with a single JSON object: {\"version\":1,\"message\":\"...\",\"debug\":\"...\"}. No other text, no code fences, no explanations."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
-            ]
-        )
 
-        let url = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            throw NSError(
-                domain: "LLMClient",
-                code: httpStatusCode(from: response),
-                userInfo: [NSLocalizedDescriptionKey: "Bedrock error. Response: \(raw)"]
-            )
-        }
-
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        let content = decoded.choices.first?.message.content ?? ""
-        if let jsonText = firstJSONObjectString(in: content), let payloadData = jsonText.data(using: .utf8) {
-            do {
-                let payload = try JSONDecoder().decode(LLMMessagePayload.self, from: payloadData)
-                return (message: sanitizeSingleMessage(payload.message), debug: payload.debug)
-            } catch {
-                let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-                return (message: sanitized, debug: "Model returned JSON-like output but failed to parse; sanitized.")
-            }
-        } else {
-            let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-            return (message: sanitized, debug: "Non-JSON model output; sanitized and echo-stripped.")
-        }
-    }
-}
-
-extension LLMClient {
-    /// Generates a contextually appropriate response to a received text message using strict JSON schema.
-    /// 
-    /// - Parameters:
-    ///   - messageContext: Formatted context including the recent message and optional conversation history
-    ///   - senderName: Name of the person who sent the message
-    ///   - styleHint: Optional style guidance (contact-specific hints, tone profile, etc.)
-    /// - Returns: Tuple containing the generated response message and optional debug info
-    /// 
-    /// **Purpose**: Helps users craft appropriate responses that match their communication style
-    /// while being contextually relevant to the incoming message.
-    func generateTextResponsePayload(
-        messageContext: String,
-        senderName: String,
-        styleHint: String? = nil
-    ) async throws -> (message: String, debug: String?) {
-        let prompt = """
-        You are helping me respond to a text message I just received.
-        
-        \(messageContext)
-        
-        Requirements:
-        - Generate EXACTLY ONE natural, conversational response (not a list, not multiple options).
-        - Keep it short and appropriate (typically 1-3 sentences, max ~40 words).
-        - Match the tone and energy of the incoming message (if they're casual, be casual; if formal, be formal).
-        - Be genuine and authentic - don't overthink it.
-        - Avoid emojis unless they genuinely fit the conversation style.
-        - No bullet points, no quotes, no extra commentary.
-        
-        \(styleHint != nil ? "\nSTYLE GUIDANCE:\n\(styleHint!)\n" : "")
-        
-        Return ONLY a single-line JSON object with this exact schema:
-        {"version":1,"message":"<final response to send>","debug":"<optional notes>"}
-        Do not include any text before or after the JSON.
-        """
-
-        let body = LLMRequest(
-            model: model,
-            messages: [
-                [
-                    "role": "system",
-                    "content": "Respond only with a single JSON object: {\"version\":1,\"message\":\"...\",\"debug\":\"...\"}. No other text, no code fences, no explanations."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
-            ]
-        )
-
-        let url = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            throw NSError(
-                domain: "LLMClient",
-                code: httpStatusCode(from: response),
-                userInfo: [NSLocalizedDescriptionKey: "Bedrock error. Response: \(raw)"]
-            )
-        }
-
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        let content = decoded.choices.first?.message.content ?? ""
-        if let jsonText = firstJSONObjectString(in: content), let payloadData = jsonText.data(using: .utf8) {
-            do {
-                let payload = try JSONDecoder().decode(LLMMessagePayload.self, from: payloadData)
-                return (message: sanitizeSingleMessage(payload.message), debug: payload.debug)
-            } catch {
-                let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-                return (message: sanitized, debug: "Model returned JSON-like output but failed to parse; sanitized.")
-            }
-        } else {
-            let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-            return (message: sanitized, debug: "Non-JSON model output; sanitized and echo-stripped.")
-        }
-    }
-}
-
-extension LLMClient {
-    /// Generates a compact tone summary from user-provided message samples using strict JSON.
-    func generateToneSummaryPayload(from samples: [String]) async throws -> (tone: String, debug: String?) {
-        let joined = samples.joined(separator: "\n---\n")
-        let prompt = """
-        You will derive a concise writing tone profile from the user's own message samples below.
-
-        SAMPLES:\n\n\(joined)
-
-        Requirements:\n- Return a short descriptor (2-4 sentences max) that captures voice, warmth, playfulness, typical length, emoji usage, and phrasing.\n- Avoid quoting full sentences from samples; generalize characteristics.\n- Do not include implementation instructions.\n
-        Return ONLY a single-line JSON object with this exact schema:\n{"version":1,"tone":"<short tone description>","debug":"<optional notes>"}\nDo not include any text before or after the JSON.
-        """
-
-        let body = LLMRequest(
-            model: model,
-            messages: [
-                [
-                    "role": "system",
-                    "content": "Respond only with a single JSON object: {\"version\":1,\"tone\":\"...\",\"debug\":\"...\"}. No other text, no code fences, no explanations."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
-            ]
-        )
-
-        let url = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            throw NSError(
-                domain: "LLMClient",
-                code: httpStatusCode(from: response),
-                userInfo: [NSLocalizedDescriptionKey: "Bedrock error. Response: \(raw)"]
-            )
-        }
-
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        let content = decoded.choices.first?.message.content ?? ""
-        if let jsonText = firstJSONObjectString(in: content), let payloadData = jsonText.data(using: .utf8) {
-            do {
-                let payload = try JSONDecoder().decode(LLMTonePayload.self, from: payloadData)
-                return (tone: sanitizeSingleMessage(payload.tone), debug: payload.debug)
-            } catch {
-                let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-                return (tone: sanitized, debug: "Model returned JSON-like output but failed to parse; sanitized.")
-            }
-        } else {
-            let sanitized = sanitizeSingleMessage(stripPromptEcho(content))
-            return (tone: sanitized, debug: "Non-JSON model output; sanitized and echo-stripped.")
-        }
-    }
-}

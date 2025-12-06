@@ -8,7 +8,7 @@
 
 ```swift
 // In ContentView.swift
-let bedrockApiKey = "ABSKQmVkcm9ja0FQSUtleS1sdmF6LWF0LTgzMTQzMDc1MTc0NDpsVmltWUJHWGNBcytGS2NndGpHcXp0eTZGTDQ4Z3JrWk9ZanpxK0F5c0grMTJZVjBkRHRTeFdzQWN3bz0="
+let bedrockApiKey = "<redacted>"
 let bedrockBaseURL = URL(string: "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1")!
 let bedrockModelId = "openai.gpt-oss-20b-1:0"
 ```

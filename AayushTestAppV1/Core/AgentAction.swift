@@ -18,7 +18,7 @@ import Foundation
 /// }
 /// ```
 protocol AgentAction {
-    /// Unique identifier for the action (e.g., "good-morning", "respond-to-text").
+    /// Unique identifier for the action (e.g., "hello", "today-schedule").
     var id: String { get }
     
     /// Human-readable name displayed in UI.

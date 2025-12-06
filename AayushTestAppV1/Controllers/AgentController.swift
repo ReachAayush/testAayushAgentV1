@@ -22,7 +22,8 @@ final class AgentController: ObservableObject {
     @Published var contactContextToPreload: String? = nil
     
     // MARK: - Service Dependencies
-    let llmClient: LLMClient
+    /// Mutable to allow runtime reconfiguration of credentials (e.g., when editing LLM settings).
+    var llmClient: LLMClient
     let calendarClient: CalendarClient
     let messagesClient: MessagesClient
     let favoritesStore: FavoriteContactsStore
@@ -42,7 +43,6 @@ final class AgentController: ObservableObject {
     }
     
     // MARK: - Action Execution
-    
     /// Executes an agent action and updates published state with results.
     ///
     /// **Flow**:
@@ -52,14 +52,14 @@ final class AgentController: ObservableObject {
     /// 4. Generates debug log
     /// 5. Handles errors
     ///
-    /// **Note**: Some actions (GoodMorningMessageAction, SummarizeDayAction) have
+    /// **Note**: Some actions (HelloMessageAction) have
     /// special handling to capture debug information and style hints.
     func run(action: AgentAction) async {
         startWork()
         defer { endWork() }
         do {
-            // Special handling for GoodMorningMessageAction
-            if let gm = action as? GoodMorningMessageAction {
+            // Special handling for HelloMessageAction
+            if let hello = action as? HelloMessageAction {
                 // Find the currently selected favorite contact and pre-load its styleHint
                 let selectedFavoriteID = UserDefaults.standard.string(forKey: "SelectedFavoriteContactID") ?? ""
                 if let contactID = UUID(uuidString: selectedFavoriteID),
@@ -69,87 +69,25 @@ final class AgentController: ObservableObject {
                 }
                 
                 let hintToUse: String? = {
-                    gm.styleHint?.nonEmptyTrimmed ?? currentStyleHint?.nonEmptyTrimmed
+                    hello.styleHint?.nonEmptyTrimmed ?? currentStyleHint?.nonEmptyTrimmed
                 }()
-                let result = try await gm.llm.generateGoodMorningMessagePayload(
-                    to: gm.recipientName,
-                    styleHint: hintToUse
+                let result = try await hello.llm.generateHelloMessagePayload(
+                    to: hello.recipientName,
+                    styleHint: hintToUse,
+                    timezoneIdentifier: hello.timezoneIdentifier
                 )
                 self.lastOutput = result.message
                 var debugLines: [String] = []
                 let timestamp = ISO8601DateFormatter().string(from: Date())
-                debugLines.append("Action: GoodMorningMessageAction")
+                debugLines.append("Action: HelloMessageAction")
                 debugLines.append("Time: \(timestamp)")
-                debugLines.append("Recipient: \(gm.recipientName)")
+                debugLines.append("Recipient: \(hello.recipientName)")
+                if let tz = hello.timezoneIdentifier { debugLines.append("Timezone: \(tz)") }
                 if let hint = hintToUse, !hint.isEmpty { debugLines.append("Style hint: \(hint)") }
                 if let dbg = result.debug, !dbg.isEmpty { debugLines.append("LLM Debug: \(dbg)") }
                 debugLines.append("")
                 debugLines.append("Prompt Sent:")
                 debugLines.append(result.prompt)
-                self.debugLog = debugLines.joined(separator: "\n")
-                return
-            }
-
-            if let sum = action as? SummarizeDayAction {
-                try await sum.calendar.requestAccessIfNeeded()
-                let eventsText: String
-                if let allowed = sum.allowedCalendarIDs, !allowed.isEmpty {
-                    eventsText = try sum.calendar.fetchTodayScheduleSummary(allowedCalendarIDs: allowed)
-                } else {
-                    eventsText = try sum.calendar.fetchTodayScheduleSummary()
-                }
-                let result = try await sum.llm.generateDaySummaryPayload(from: eventsText, styleHint: sum.styleHint)
-                self.lastOutput = result.message
-                var debugLines: [String] = []
-                let timestamp = ISO8601DateFormatter().string(from: Date())
-                debugLines.append("Action: SummarizeDayAction")
-                debugLines.append("Time: \(timestamp)")
-                if let allowed = sum.allowedCalendarIDs, !allowed.isEmpty {
-                    debugLines.append("Calendars: \(allowed.joined(separator: ", "))")
-                } else {
-                    debugLines.append("Calendars: All")
-                }
-                if let dbg = result.debug, !dbg.isEmpty { debugLines.append("LLM Debug: \(dbg)") }
-                
-                var sumPrompt: [String] = []
-                sumPrompt.append("Prompt (Day Summary):")
-                sumPrompt.append("You are composing a short, friendly summary of my day based on the following schedule:\n\nSCHEDULE:\n\n\(eventsText)")
-                sumPrompt.append("")
-                sumPrompt.append("Requirements:")
-                sumPrompt.append("- Output EXACTLY ONE short paragraph (max ~60 words), friendly and encouraging.")
-                sumPrompt.append("- Avoid bullet points or lists; write as natural prose.")
-                sumPrompt.append("- If there are no events, provide a gentle, positive note for a free day.")
-                if let hint = sum.styleHint, !hint.isEmpty {
-                    sumPrompt.append("")
-                    sumPrompt.append(hint)
-                }
-                debugLines.append("")
-                debugLines.append(sumPrompt.joined(separator: "\n"))
-                
-                self.debugLog = debugLines.joined(separator: "\n")
-                return
-            }
-
-            // Special handling for RespondToTextAction
-            if let respond = action as? RespondToTextAction {
-                let result = try await respond.run()
-                switch result {
-                case .text(let text):
-                    self.lastOutput = text
-                }
-                
-                var debugLines: [String] = []
-                let timestamp = ISO8601DateFormatter().string(from: Date())
-                debugLines.append("Action: RespondToTextAction")
-                debugLines.append("Time: \(timestamp)")
-                debugLines.append("Sender: \(respond.senderName)")
-                debugLines.append("Recent Message: \(respond.recentMessage)")
-                if let history = respond.conversationHistory, !history.isEmpty {
-                    debugLines.append("History: \(history.count) previous messages")
-                }
-                if let hint = respond.styleHint, !hint.isEmpty {
-                    debugLines.append("Style hint applied")
-                }
                 self.debugLog = debugLines.joined(separator: "\n")
                 return
             }

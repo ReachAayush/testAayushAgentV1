@@ -256,7 +256,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_LSApplicationQueriesSchemes = comgooglemaps;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "This app reads your calendar to summarize today's schedule";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to find the nearest PATH station and show you train directions.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -296,7 +298,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_LSApplicationQueriesSchemes = comgooglemaps;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "This app reads your calendar to summarize today's schedule";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to find the nearest PATH station and show you train directions.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

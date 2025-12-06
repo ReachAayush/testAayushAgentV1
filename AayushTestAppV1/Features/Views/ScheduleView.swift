@@ -175,3 +175,13 @@ struct ScheduleView: View {
     }
 }
 
+#Preview("ScheduleView Preview") {
+    let llm = LLMClient(apiKey: "preview", baseURL: URL(string: "https://example.com")!, model: "preview")
+    let agent = AgentController(
+        llmClient: llm,
+        calendarClient: CalendarClient(),
+        messagesClient: MessagesClient(),
+        favoritesStore: FavoriteContactsStore()
+    )
+    return ScheduleView(agent: agent)
+}

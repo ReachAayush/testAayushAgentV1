@@ -1,41 +1,43 @@
 import Foundation
 
-/// Action that generates a personalized good morning message.
+/// Action that generates a personalized hello message with time-of-day awareness.
 ///
-/// **Purpose**: Creates warm, personalized morning messages using LLM with support for:
+/// **Purpose**: Creates warm, personalized greeting messages using LLM with support for:
 /// - Contact-specific style hints (relationship context, tone preferences)
-/// - Tone profile integration (user's messaging style)
+/// - Timezone-aware greetings (morning, afternoon, evening based on recipient's timezone)
 /// - Custom context (additional guidance)
 ///
 /// **Architecture**: Follows the `AgentAction` protocol. Business logic is in the action,
-/// while UI coordination happens in `AgentController` and `GoodMorningView`.
+/// while UI coordination happens in `AgentController` and `HelloView`.
 ///
-/// **Usage**: Typically created in `GoodMorningView` with user-selected contact and
+/// **Usage**: Typically created in `HelloView` with user-selected contact and
 /// style hints, then executed via `AgentController.run(action:)`.
-struct GoodMorningMessageAction: AgentAction {
+struct HelloMessageAction: AgentAction {
     // MARK: - AgentAction Conformance
-    let id = "good-morning"
-    let displayName = "Generate Good Morning Text"
-    let summary = "Creates a sweet good-morning message using the LLM."
+    let id = "hello"
+    let displayName = "Generate Hello Message"
+    let summary = "Creates a personalized hello message using the LLM with time-of-day awareness."
 
     // MARK: - Dependencies
     let recipientName: String
     let styleHint: String?
+    let timezoneIdentifier: String?
     let llm: LLMClient
 
     // MARK: - AgentAction Implementation
     
-    /// Generates the good morning message.
+    /// Generates the hello message.
     ///
     /// - Returns: `AgentActionResult.text` containing the generated message
     /// - Throws: Errors from LLM API or network issues
     ///
-    /// **Note**: The actual message generation happens in `LLMClient.generateGoodMorningMessagePayload`.
+    /// **Note**: The actual message generation happens in `LLMClient.generateHelloMessagePayload`.
     /// This action just coordinates the call and returns the result.
     func run() async throws -> AgentActionResult {
-        let result = try await llm.generateGoodMorningMessagePayload(
+        let result = try await llm.generateHelloMessagePayload(
             to: recipientName,
-            styleHint: styleHint
+            styleHint: styleHint,
+            timezoneIdentifier: timezoneIdentifier
         )
         // We return only the text; AgentController will capture debug via type inspection
         return .text(result.message)

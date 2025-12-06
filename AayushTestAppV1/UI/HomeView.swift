@@ -3,11 +3,9 @@ import SwiftUI
 /// Main home screen serving as the navigation hub for all app features.
 ///
 /// **Purpose**: Provides a central location for accessing all app actions:
-/// - Good Morning messages
+/// - Hello messages (timezone-aware greetings)
 /// - Calendar schedule viewing
-/// - Day summaries
-/// - Text response generation
-/// - Settings (calendar, favorites, tone training)
+/// - Settings (calendar, favorites)
 ///
 /// **Architecture**: Uses full-screen covers for action views and sheets for settings.
 /// Follows Instagram-style card-based UI with Steelers theme.
@@ -21,29 +19,13 @@ struct HomeView: View {
     // MARK: - Observed Objects
     @ObservedObject var agent: AgentController
     @ObservedObject var favorites: FavoriteContactsStore
-    @ObservedObject var toneStore: ToneProfileStore
     
     // MARK: - State
     @State private var showingCalendarSelection = false
     @State private var showingManageFavorites = false
-    @State private var showingToneTrainer = false
+    @State private var showingLLMSettings = false
     
-    @State private var selectedAction: ActionType? = nil
-    
-    /// Enumeration of available actions in the app.
-    /// 
-    /// **Purpose**: Type-safe action identification for navigation.
-    /// **Extensibility**: Add new cases here and corresponding views in the switch statement.
-    enum ActionType {
-        case goodMorning
-        case todaySchedule
-        case summarizeDay
-        case respondToText
-        // Future actions can be added here:
-        // case scheduleMessage
-        // case analyzeConversation
-        // case generateEmail
-    }
+    @State private var selectedAction: AnyHomeAction? = nil
     
     var body: some View {
         NavigationStack {
@@ -74,67 +56,17 @@ struct HomeView: View {
                         
                         // Action Cards (Instagram-style)
                         VStack(spacing: 16) {
-                            // Good Morning Message Card
-                            ActionCard(
-                                icon: "sunrise.fill",
-                                title: "Good Morning",
-                                subtitle: "Send a personalized morning message",
-                                gradientColors: [SteelersTheme.steelersGold, SteelersTheme.goldAccent]
-                            ) {
-                                selectedAction = .goodMorning
+                            // Actions are driven by the registry for easy extensibility
+                            ForEach(ActionRegistry.all) { item in
+                                ActionCard(
+                                    icon: item.icon,
+                                    title: item.title,
+                                    subtitle: item.subtitle,
+                                    gradientColors: item.gradientColors
+                                ) {
+                                    selectedAction = item
+                                }
                             }
-                            
-                            // Today's Schedule Card
-                            ActionCard(
-                                icon: "calendar",
-                                title: "Today's Schedule",
-                                subtitle: "View your calendar for today",
-                                gradientColors: [SteelersTheme.darkGray, SteelersTheme.steelersBlack]
-                            ) {
-                                selectedAction = .todaySchedule
-                            }
-                            
-                            // Summarize Day Card
-                            ActionCard(
-                                icon: "doc.text.fill",
-                                title: "Summarize Day",
-                                subtitle: "Get an AI summary of your day",
-                                gradientColors: [SteelersTheme.steelersGold.opacity(0.8), SteelersTheme.darkGray]
-                            ) {
-                                selectedAction = .summarizeDay
-                            }
-                            
-                            // Respond to Text Card (NEW)
-                            ActionCard(
-                                icon: "message.fill",
-                                title: "Respond to Text",
-                                subtitle: "Generate a response to a recent message",
-                                gradientColors: [SteelersTheme.steelersGold, SteelersTheme.goldAccent.opacity(0.7)]
-                            ) {
-                                selectedAction = .respondToText
-                            }
-                            
-                            // Future Action Placeholders (commented out for now)
-                            // Uncomment and implement when ready:
-                            /*
-                            ActionCard(
-                                icon: "clock.fill",
-                                title: "Schedule Message",
-                                subtitle: "Schedule a message for later",
-                                gradientColors: [SteelersTheme.darkGray, SteelersTheme.steelersBlack]
-                            ) {
-                                selectedAction = .scheduleMessage
-                            }
-                            
-                            ActionCard(
-                                icon: "chart.bar.fill",
-                                title: "Analyze Conversation",
-                                subtitle: "Get insights from message history",
-                                gradientColors: [SteelersTheme.steelersGold.opacity(0.6), SteelersTheme.darkGray]
-                            ) {
-                                selectedAction = .analyzeConversation
-                            }
-                            */
                         }
                         .padding(.horizontal, 20)
                     }
@@ -160,9 +92,9 @@ struct HomeView: View {
                                 .font(.title3)
                         }
                         Button {
-                            showingToneTrainer = true
+                            showingLLMSettings = true
                         } label: {
-                            Image(systemName: "tuningfork")
+                            Image(systemName: "key.fill")
                                 .foregroundColor(SteelersTheme.steelersGold)
                                 .font(.title3)
                         }
@@ -175,41 +107,14 @@ struct HomeView: View {
             .sheet(isPresented: $showingManageFavorites) {
                 FavoritesManagementView(store: favorites)
             }
-            .sheet(isPresented: $showingToneTrainer) {
-                ToneTrainerView(store: toneStore, favorites: favorites, llm: agent.llmClient)
+            .sheet(isPresented: $showingLLMSettings) {
+                LLMSettingsScreen()
             }
             .fullScreenCover(item: $selectedAction) { action in
-                switch action {
-                case .goodMorning:
-                    GoodMorningView(
-                        agent: agent,
-                        favorites: favorites,
-                        toneStore: toneStore
-                    )
-                case .todaySchedule:
-                    ScheduleView(agent: agent)
-                case .summarizeDay:
-                    SummaryView(agent: agent)
-                case .respondToText:
-                    RespondToTextView(
-                        agent: agent,
-                        favorites: favorites,
-                        toneStore: toneStore
-                    )
-                // Future actions:
-                // case .scheduleMessage:
-                //     ScheduleMessageView(agent: agent, favorites: favorites)
-                // case .analyzeConversation:
-                //     AnalyzeConversationView(agent: agent, favorites: favorites)
-                }
+                action.buildView(agent, favorites)
             }
         }
     }
-}
-
-// Make ActionType Identifiable for fullScreenCover
-extension HomeView.ActionType: Identifiable {
-    var id: Self { self }
 }
 
 // MARK: - Action Card Component
@@ -269,3 +174,14 @@ struct ActionCard: View {
     }
 }
 
+#Preview {
+    // Minimal stubs for preview
+    let llm = LLMClient(apiKey: "preview", baseURL: URL(string: "https://example.com")!, model: "preview")
+    let agent = AgentController(
+        llmClient: llm,
+        calendarClient: CalendarClient(),
+        messagesClient: MessagesClient(),
+        favoritesStore: FavoriteContactsStore()
+    )
+    return HomeView(agent: agent, favorites: FavoriteContactsStore())
+}

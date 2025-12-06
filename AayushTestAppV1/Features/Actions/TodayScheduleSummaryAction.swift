@@ -6,12 +6,8 @@ import Foundation
 /// Useful for:
 /// - Quick schedule reference
 /// - When you just need the raw calendar data
-/// - Faster than `SummarizeDayAction` (no LLM call)
 ///
 /// **Architecture**: Follows the `AgentAction` protocol. Pure data access - no AI processing.
-///
-/// **Difference from SummarizeDayAction**: This action returns raw formatted calendar data,
-/// while `SummarizeDayAction` uses LLM to generate a narrative summary.
 struct TodayScheduleSummaryAction: AgentAction {
     // MARK: - AgentAction Conformance
     let id = "today-schedule"
@@ -31,7 +27,6 @@ struct TodayScheduleSummaryAction: AgentAction {
     /// - Throws: Errors from calendar access
     ///
     /// **Note**: Returns plain formatted text (e.g., "9:00 AM: Meeting with team").
-    /// For AI-generated summaries, use `SummarizeDayAction` instead.
     func run() async throws -> AgentActionResult {
         try await calendar.requestAccessIfNeeded()
         let text: String

@@ -6,7 +6,7 @@ import EventKit
 /// and abstracting away EventKit complexity from the rest of the app.
 ///
 /// **Architecture**: Follows the service layer pattern - pure data access with no business
-/// logic. Used by actions like `TodayScheduleSummaryAction` and `SummarizeDayAction`.
+/// logic. Used by actions like `TodayScheduleSummaryAction`.
 ///
 /// **Permissions**: Requires calendar access permission. Handles both iOS 17+ (full access)
 /// and legacy (read-only) permission models.

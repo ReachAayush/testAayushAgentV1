@@ -1,11 +1,10 @@
 import SwiftUI
 import UIKit
 
-struct GoodMorningView: View {
+struct HelloView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var agent: AgentController
     @ObservedObject var favorites: FavoriteContactsStore
-    @ObservedObject var toneStore: ToneProfileStore
     
     @AppStorage("SelectedFavoriteContactID") private var selectedFavoriteID: String = ""
     @State private var contactContext: String = ""
@@ -31,13 +30,13 @@ struct GoodMorningView: View {
                     VStack(spacing: 24) {
                         // Header Section
                         VStack(spacing: 12) {
-                            Image(systemName: "sunrise.fill")
+                            Image(systemName: "hand.wave.fill")
                                 .font(.system(size: 50))
                                 .foregroundColor(SteelersTheme.steelersGold)
-                            Text("Good Morning Message")
+                            Text("Hello Message")
                                 .font(.system(size: 28, weight: .bold))
                                 .foregroundColor(SteelersTheme.textPrimary)
-                            Text("Send a personalized morning message")
+                            Text("Send a personalized greeting")
                                 .font(.subheadline)
                                 .foregroundColor(SteelersTheme.textSecondary)
                         }
@@ -69,6 +68,11 @@ struct GoodMorningView: View {
                                         Text(favorite.phone)
                                             .font(.subheadline)
                                             .foregroundColor(SteelersTheme.textSecondary)
+                                        if let tz = favorite.timezoneIdentifier {
+                                            Text("Timezone: \(tz)")
+                                                .font(.caption)
+                                                .foregroundColor(SteelersTheme.steelersGold.opacity(0.8))
+                                        }
                                     }
                                     
                                     Spacer()
@@ -115,14 +119,13 @@ struct GoodMorningView: View {
                                     }
                                     
                                     let combinedHint = StyleHintHelper.combineWithPrefixes([
-                                        (contactContext as String?, nil),
-                                        (toneStore.toneSummary as String?, "Tone profile: ")
+                                        (contactContext as String?, nil)
                                     ])
                                     
-                                    let action = GoodMorningMessageAction(
+                                    let action = HelloMessageAction(
                                         recipientName: fav.name,
-                                        // FIX: Use nil-coalescing to safely check .isEmpty on String
                                         styleHint: (combinedHint ?? "").isEmpty ? nil : combinedHint,
+                                        timezoneIdentifier: fav.timezoneIdentifier,
                                         llm: agent.llmClient
                                     )
                                     await agent.run(action: action)
@@ -349,4 +352,15 @@ struct ContactPickerView: View {
             }
         }
     }
+}
+
+#Preview("HelloView Preview") {
+    let llm = LLMClient(apiKey: "preview", baseURL: URL(string: "https://example.com")!, model: "preview")
+    let agent = AgentController(
+        llmClient: llm,
+        calendarClient: CalendarClient(),
+        messagesClient: MessagesClient(),
+        favoritesStore: FavoriteContactsStore()
+    )
+    return HelloView(agent: agent, favorites: FavoriteContactsStore())
 }
