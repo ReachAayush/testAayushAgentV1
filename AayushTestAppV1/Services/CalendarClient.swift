@@ -41,6 +41,13 @@ final class CalendarClient {
     /// - Throws: Error if access is denied or request fails
     /// - Note: This method is idempotent - safe to call multiple times
     func requestAccessIfNeeded() async throws {
+        // TODO: OPERATIONAL METRICS - Track calendar permission requests
+        // Metrics to emit:
+        // - calendar.permission.request (counter) - permission request attempts
+        // - calendar.permission.status (gauge) - current permission status
+        // For now: logger.debug("Calendar permission request initiated", category: .calendar)
+        let logger = LoggingService.shared
+        logger.debug("Calendar permission request initiated", category: .calendar)
         try await withCheckedThrowingContinuation { continuation in
             if #available(iOS 17.0, *) {
                 eventStore.requestFullAccessToEvents { granted, error in
@@ -67,9 +74,22 @@ final class CalendarClient {
         error: Error?,
         continuation: CheckedContinuation<Void, Error>
     ) {
+        let logger = LoggingService.shared
+        
         if let error = error {
+            // TODO: OPERATIONAL METRICS - Track calendar permission errors
+            // Metrics to emit:
+            // - calendar.permission.error (counter) - permission request errors
+            // - calendar.permission.error.type (counter) - error type
+            // For now: logger.debug("Calendar permission request error: errorType=\(type(of: error))", category: .calendar)
+            logger.debug("Calendar permission request error: errorType=\(type(of: error))", category: .calendar)
             continuation.resume(throwing: error)
         } else if !granted {
+            // TODO: OPERATIONAL METRICS - Track calendar permission denials
+            // Metrics to emit:
+            // - calendar.permission.denied (counter) - permission denials
+            // For now: logger.debug("Calendar permission denied by user", category: .calendar)
+            logger.debug("Calendar permission denied by user", category: .calendar)
             let err = NSError(
                 domain: "CalendarClient",
                 code: 1,
@@ -77,6 +97,11 @@ final class CalendarClient {
             )
             continuation.resume(throwing: err)
         } else {
+            // TODO: OPERATIONAL METRICS - Track calendar permission grants
+            // Metrics to emit:
+            // - calendar.permission.granted (counter) - permission grants
+            // For now: logger.debug("Calendar permission granted", category: .calendar)
+            logger.debug("Calendar permission granted", category: .calendar)
             continuation.resume()
         }
     }
@@ -87,6 +112,15 @@ final class CalendarClient {
     /// - Returns: Formatted string with today's events
     /// - Throws: Error if calendar access is not available
     private func fetchTodayScheduleSummary(using calendars: [EKCalendar]) throws -> String {
+        // TODO: OPERATIONAL METRICS - Track calendar data fetch initiation
+        // Metrics to emit:
+        // - calendar.fetch.initiated (counter) - calendar fetch attempts
+        // - calendar.fetch.calendar_count (histogram) - number of calendars queried
+        // For now: logger.debug("Calendar fetch initiated: calendarCount=\(calendars.count)", category: .calendar)
+        let logger = LoggingService.shared
+        let fetchStartTime = Date()
+        logger.debug("Calendar fetch initiated: calendarCount=\(calendars.count)", category: .calendar)
+        
         let now = Date()
         let startOfDay = Calendar.current.startOfDay(for: now)
         guard let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) else {
@@ -102,6 +136,15 @@ final class CalendarClient {
         let events = eventStore
             .events(matching: predicate)
             .sorted(by: { $0.startDate < $1.startDate })
+
+        // TODO: OPERATIONAL METRICS - Track calendar fetch results
+        // Metrics to emit:
+        // - calendar.fetch.duration (histogram) - fetch latency in milliseconds
+        // - calendar.fetch.events.count (histogram) - number of events found
+        // - calendar.fetch.success (counter) - successful fetches
+        // For now: logger.debug("Calendar fetch completed: duration=\(duration)ms, eventsCount=\(events.count)", category: .calendar)
+        let fetchDuration = Date().timeIntervalSince(fetchStartTime) * 1000 // milliseconds
+        logger.debug("Calendar fetch completed: duration=\(String(format: "%.2f", fetchDuration))ms, eventsCount=\(events.count)", category: .calendar)
 
         guard !events.isEmpty else {
             return "You have no events scheduled today."

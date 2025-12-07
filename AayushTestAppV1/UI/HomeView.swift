@@ -64,6 +64,13 @@ struct HomeView: View {
                                     subtitle: item.subtitle,
                                     gradientColors: item.gradientColors
                                 ) {
+                                    // TODO: OPERATIONAL METRICS - Track user action selection
+                                    // Metrics to emit:
+                                    // - ui.action.selected (counter) - action card taps
+                                    // - ui.action.type (counter) - action type selected (hello, schedule, transit)
+                                    // For now: logger.debug("Action selected: actionId=\(item.id)", category: .ui)
+                                    let logger = LoggingService.shared
+                                    logger.debug("Action selected: actionId=\(item.id)", category: .ui)
                                     selectedAction = item
                                 }
                             }
@@ -78,6 +85,12 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 16) {
                         Button {
+                            // TODO: OPERATIONAL METRICS - Track settings access
+                            // Metrics to emit:
+                            // - ui.settings.calendar_opened (counter) - calendar settings opens
+                            // For now: logger.debug("Calendar settings opened", category: .ui)
+                            let logger = LoggingService.shared
+                            logger.debug("Calendar settings opened", category: .ui)
                             showingCalendarSelection = true
                         } label: {
                             Image(systemName: "calendar.badge.gear")
@@ -85,6 +98,12 @@ struct HomeView: View {
                                 .font(.title3)
                         }
                         Button {
+                            // TODO: OPERATIONAL METRICS - Track settings access
+                            // Metrics to emit:
+                            // - ui.settings.favorites_opened (counter) - favorites management opens
+                            // For now: logger.debug("Favorites management opened", category: .ui)
+                            let logger = LoggingService.shared
+                            logger.debug("Favorites management opened", category: .ui)
                             showingManageFavorites = true
                         } label: {
                             Image(systemName: "person.2.fill")
@@ -92,6 +111,12 @@ struct HomeView: View {
                                 .font(.title3)
                         }
                         Button {
+                            // TODO: OPERATIONAL METRICS - Track settings access
+                            // Metrics to emit:
+                            // - ui.settings.llm_opened (counter) - LLM settings opens
+                            // For now: logger.debug("LLM settings opened", category: .ui)
+                            let logger = LoggingService.shared
+                            logger.debug("LLM settings opened", category: .ui)
                             showingLLMSettings = true
                         } label: {
                             Image(systemName: "key.fill")

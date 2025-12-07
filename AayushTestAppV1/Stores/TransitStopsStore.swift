@@ -63,12 +63,25 @@ final class TransitStopsStore: ObservableObject {
     
     /// Adds a new stop and persists the change.
     func addStop(_ stop: TransitStop) {
+        // TODO: OPERATIONAL METRICS - Track transit stop management
+        // Metrics to emit:
+        // - transit.stops.added (counter) - stops added
+        // - transit.stops.total (gauge) - total number of stops
+        // For now: logger.debug("Transit stop added: name=\(stop.name), totalStops=\(stops.count + 1)", category: .general)
+        let logger = LoggingService.shared
+        logger.debug("Transit stop added: name=\(stop.name), totalStops=\(stops.count + 1)", category: .general)
         stops.append(stop)
         save()
     }
     
     /// Updates an existing stop by id and persists the change.
     func updateStop(_ stop: TransitStop) {
+        // TODO: OPERATIONAL METRICS - Track transit stop management
+        // Metrics to emit:
+        // - transit.stops.updated (counter) - stops updated
+        // For now: logger.debug("Transit stop updated: name=\(stop.name)", category: .general)
+        let logger = LoggingService.shared
+        logger.debug("Transit stop updated: name=\(stop.name)", category: .general)
         if let index = stops.firstIndex(where: { $0.id == stop.id }) {
             stops[index] = stop
             save()
@@ -77,6 +90,13 @@ final class TransitStopsStore: ObservableObject {
     
     /// Deletes a stop by id and persists the change.
     func deleteStop(_ stop: TransitStop) {
+        // TODO: OPERATIONAL METRICS - Track transit stop management
+        // Metrics to emit:
+        // - transit.stops.deleted (counter) - stops deleted
+        // - transit.stops.total (gauge) - total number of stops
+        // For now: logger.debug("Transit stop deleted: name=\(stop.name), totalStops=\(stops.count - 1)", category: .general)
+        let logger = LoggingService.shared
+        logger.debug("Transit stop deleted: name=\(stop.name), totalStops=\(stops.count - 1)", category: .general)
         stops.removeAll { $0.id == stop.id }
         save()
     }

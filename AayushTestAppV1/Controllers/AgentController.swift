@@ -63,8 +63,27 @@ final class AgentController: ObservableObject {
     /// **Note**: Some actions (HelloMessageAction) have
     /// special handling to capture debug information and style hints.
     func run(action: AgentAction) async {
+        // TODO: OPERATIONAL METRICS - Track action execution initiation
+        // Metrics to emit:
+        // - action.execution.initiated (counter) - total action executions
+        // - action.execution.type (counter) - action type (hello, schedule, etc.)
+        // For now: logger.debug("Action execution initiated: actionId=\(action.id), actionType=\(type(of: action))", category: .action)
+        let logger = LoggingService.shared
+        let actionStartTime = Date()
+        logger.debug("Action execution initiated: actionId=\(action.id), actionType=\(type(of: action))", category: .action)
+        
         startWork()
-        defer { endWork() }
+        defer { 
+            endWork()
+            // TODO: OPERATIONAL METRICS - Track action execution completion
+            // Metrics to emit:
+            // - action.execution.duration (histogram) - action execution latency in milliseconds
+            // - action.execution.success (counter) - successful executions
+            // - action.execution.failure (counter) - failed executions
+            // For now: logger.debug("Action execution completed: actionId=\(action.id), duration=\(duration)ms", category: .action)
+            let actionDuration = Date().timeIntervalSince(actionStartTime) * 1000 // milliseconds
+            logger.debug("Action execution completed: actionId=\(action.id), duration=\(String(format: "%.2f", actionDuration))ms", category: .action)
+        }
         do {
             // Special handling for HelloMessageAction
             if let hello = action as? HelloMessageAction {
@@ -119,7 +138,23 @@ final class AgentController: ObservableObject {
                 }
             }
             self.debugLog = debugLines.joined(separator: "\n")
+            
+            // TODO: OPERATIONAL METRICS - Track successful action completion
+            // Metrics to emit:
+            // - action.execution.success (counter) - increment on success
+            // - action.execution.type.success (counter) - success by action type
+            // For now: logger.debug("Action execution succeeded: actionId=\(action.id)", category: .action)
+            logger.debug("Action execution succeeded: actionId=\(action.id)", category: .action)
         } catch {
+            // TODO: OPERATIONAL METRICS - Track action execution failures
+            // Metrics to emit:
+            // - action.execution.failure (counter) - increment on failure
+            // - action.execution.error.type (counter) - error type (network, permission, validation, etc.)
+            // - action.execution.type.failure (counter) - failure by action type
+            // For now: logger.debug("Action execution failed: actionId=\(action.id), errorType=\(errorType)", category: .action)
+            let appError = AppError.from(error)
+            let errorType = String(describing: type(of: appError))
+            logger.debug("Action execution failed: actionId=\(action.id), errorType=\(errorType)", category: .action)
             self.errorMessage = error.localizedDescription
         }
     }

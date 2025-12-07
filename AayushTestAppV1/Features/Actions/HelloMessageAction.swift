@@ -34,6 +34,16 @@ struct HelloMessageAction: AgentAction {
     /// **Note**: The actual message generation happens in `LLMClient.generateHelloMessagePayload`.
     /// This action just coordinates the call and returns the result.
     func run() async throws -> AgentActionResult {
+        // TODO: OPERATIONAL METRICS - Track hello action usage
+        // Metrics to emit:
+        // - action.hello.initiated (counter) - hello action executions
+        // - action.hello.recipient (counter) - recipient name (anonymized/hashed)
+        // - action.hello.has_timezone (counter) - actions with timezone specified
+        // - action.hello.has_style_hint (counter) - actions with style hints
+        // For now: logger.debug("Hello action: recipient=\(recipientName), hasTimezone=\(timezoneIdentifier != nil), hasStyleHint=\(styleHint != nil)", category: .action)
+        let logger = LoggingService.shared
+        logger.debug("Hello action: recipient=\(recipientName), hasTimezone=\(timezoneIdentifier != nil), hasStyleHint=\(styleHint != nil)", category: .action)
+        
         let result = try await llm.generateHelloMessagePayload(
             to: recipientName,
             styleHint: styleHint,

@@ -76,6 +76,16 @@ enum ActionRegistry {
             buildView: { _, _ in
                 AnyView(PATHTrainView())
             }
+        )),
+        AnyHomeAction(item: HomeActionItem(
+            id: "restaurantReservation",
+            icon: "fork.knife",
+            title: "Restaurant Reservation",
+            subtitle: "Find & book a vegetarian restaurant",
+            gradientColors: [Color.green.opacity(0.8), SteelersTheme.steelersGold],
+            buildView: { agent, _ in
+                AnyView(RestaurantReservationView(agent: agent, locationClient: LocationClient()))
+            }
         ))
     ]
 }

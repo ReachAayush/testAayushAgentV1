@@ -222,10 +222,29 @@ struct PATHTrainView: View {
     }
     
     private func getDirections() async {
+        // TODO: OPERATIONAL METRICS - Track transit directions requests
+        // Metrics to emit:
+        // - transit.directions.initiated (counter) - directions request attempts
+        // - transit.directions.destination (counter) - destination name (anonymized)
+        // For now: logger.debug("Transit directions initiated: destination=\(selectedStop?.name ?? "unknown")", category: .general)
+        let logger = LoggingService.shared
+        let directionsStartTime = Date()
+        logger.debug("Transit directions initiated: destination=\(selectedStop?.name ?? "unknown")", category: .general)
+        
         isGettingLocation = true
         errorMessage = nil
         
-        defer { isGettingLocation = false }
+        defer { 
+            isGettingLocation = false
+            // TODO: OPERATIONAL METRICS - Track transit directions completion
+            // Metrics to emit:
+            // - transit.directions.duration (histogram) - directions flow latency
+            // - transit.directions.success (counter) - successful directions
+            // - transit.directions.failure (counter) - failed directions
+            // For now: logger.debug("Transit directions completed: duration=\(duration)ms", category: .general)
+            let directionsDuration = Date().timeIntervalSince(directionsStartTime) * 1000 // milliseconds
+            logger.debug("Transit directions completed: duration=\(String(format: "%.2f", directionsDuration))ms", category: .general)
+        }
         
         guard let destination = selectedStop else {
             errorMessage = "Please select a destination"
@@ -239,11 +258,23 @@ struct PATHTrainView: View {
             
             // Open directions from current location (as coordinates) to destination (as address string)
             let sourceCoord = location.coordinate
+            // TODO: OPERATIONAL METRICS - Track Google Maps URL opening
+            // Metrics to emit:
+            // - transit.directions.maps_opened (counter) - Google Maps opened
+            // - transit.directions.maps_app_available (counter) - native app vs web
+            // For now: logger.debug("Opening Google Maps directions", category: .general)
+            logger.debug("Opening Google Maps directions", category: .general)
             openDirections(
                 fromCoordinate: sourceCoord,
                 toAddress: destination.name
             )
         } catch {
+            // TODO: OPERATIONAL METRICS - Track transit directions errors
+            // Metrics to emit:
+            // - transit.directions.failure (counter) - failed directions
+            // - transit.directions.error.type (counter) - error type (location, maps, etc.)
+            // For now: logger.debug("Transit directions failed: errorType=\(type(of: error))", category: .general)
+            logger.debug("Transit directions failed: errorType=\(type(of: error))", category: .general)
             errorMessage = error.localizedDescription
         }
     }

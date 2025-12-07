@@ -28,6 +28,15 @@ struct TodayScheduleSummaryAction: AgentAction {
     ///
     /// **Note**: Returns plain formatted text (e.g., "9:00 AM: Meeting with team").
     func run() async throws -> AgentActionResult {
+        // TODO: OPERATIONAL METRICS - Track schedule action usage
+        // Metrics to emit:
+        // - action.schedule.initiated (counter) - schedule action executions
+        // - action.schedule.calendar_filter (counter) - actions with calendar filtering
+        // - action.schedule.calendar_count (histogram) - number of calendars queried
+        // For now: logger.debug("Schedule action: hasFilter=\(allowedCalendarIDs != nil), calendarCount=\(allowedCalendarIDs?.count ?? 0)", category: .action)
+        let logger = LoggingService.shared
+        logger.debug("Schedule action: hasFilter=\(allowedCalendarIDs != nil), calendarCount=\(allowedCalendarIDs?.count ?? 0)", category: .action)
+        
         try await calendar.requestAccessIfNeeded()
         let text: String
         if let allowed = allowedCalendarIDs, !allowed.isEmpty {
