@@ -2,13 +2,47 @@
 //  RestaurantDiscoveryService.swift
 //  AayushTestAppV1
 //
-//  Created on 2024
-//  Copyright © 2024. All rights reserved.
 //
 
 import Foundation
 import CoreLocation
 import MapKit
+
+/// Configuration for restaurant search filters.
+struct RestaurantSearchFilters: CustomStringConvertible {
+    /// Specific cuisine types to include. Empty array means all cuisines.
+    var cuisines: [String] = []
+    
+    /// Whether to require vegetarian-friendly restaurants.
+    var vegetarianRequired: Bool = false
+    
+    /// Whether to require vegan-friendly restaurants.
+    var veganRequired: Bool = false
+    
+    /// Maximum distance in meters from search location. Nil means use search radius.
+    var maxDistance: Int? = nil
+    
+    /// Minimum number of vegetarian options (if vegetarianRequired is true).
+    var minVegetarianOptions: Int? = nil
+    
+    /// Default filters (no restrictions)
+    nonisolated static let `default` = RestaurantSearchFilters()
+    
+    /// Filters for vegetarian restaurants
+    nonisolated static let vegetarian = RestaurantSearchFilters(
+        vegetarianRequired: true
+    )
+    
+    var description: String {
+        var parts: [String] = []
+        if !cuisines.isEmpty { parts.append("cuisines:\(cuisines.joined(separator: ","))") }
+        if vegetarianRequired { parts.append("vegetarian") }
+        if veganRequired { parts.append("vegan") }
+        if let maxDist = maxDistance { parts.append("maxDistance:\(maxDist)m") }
+        if let minVegOptions = minVegetarianOptions { parts.append("minVegOptions:\(minVegOptions)") }
+        return parts.isEmpty ? "none" : parts.joined(separator: ", ")
+    }
+}
 
 /// Service for discovering restaurants using Apple Maps (MKLocalSearch).
 ///
@@ -29,15 +63,17 @@ final class RestaurantDiscoveryService {
     ///   - query: Optional search query (e.g., "vegetarian", "Italian")
     ///   - radius: Search radius in meters (default: 5000)
     ///   - limit: Maximum number of results (default: 10)
+        ///   - filters: Optional search filters for cuisine, etc.
     /// - Returns: Array of discovered restaurants
     /// - Throws: Errors from network or API
     func searchRestaurants(
         near location: CLLocation,
         query: String? = nil,
         radius: Int = 5000,
-        limit: Int = 10
+        limit: Int = 10,
+        filters: RestaurantSearchFilters = .default
     ) async throws -> [Restaurant] {
-        logger.debug("Searching restaurants near (\(location.coordinate.latitude), \(location.coordinate.longitude)), query=\(query ?? "none"), radius=\(radius)m", category: .restaurant)
+        logger.debug("Searching restaurants near (\(location.coordinate.latitude), \(location.coordinate.longitude)), query=\(query ?? "none"), radius=\(radius)m, filters=\(filters)", category: .restaurant)
         
         // TODO: OPERATIONAL METRICS - Track restaurant search
         // Metrics to emit:
@@ -45,12 +81,23 @@ final class RestaurantDiscoveryService {
         // - restaurant.search.query_type (counter) - query types (vegetarian, cuisine, etc.)
         
         // Use Apple Maps MKLocalSearch (free, no API key required)
-        return try await searchRestaurantsAppleMaps(
+        var restaurants = try await searchRestaurantsAppleMaps(
             near: location,
             query: query,
             radius: radius,
             limit: limit
         )
+        
+        // Apply filters using protocol-based approach
+        let filterPredicates = filters.createFilters(referenceLocation: location)
+        if !filterPredicates.isEmpty {
+            restaurants = restaurants.filter { restaurant in
+                filterPredicates.allSatisfy { $0.matches(restaurant, location: location) }
+            }
+            logger.debug("Applied \(filterPredicates.count) filters: \(restaurants.count) restaurants remaining", category: .restaurant)
+        }
+        
+        return restaurants
     }
     
     /// Apple Maps implementation using MKLocalSearch (free, no API key required).
@@ -63,47 +110,32 @@ final class RestaurantDiscoveryService {
         logger.debug("Using Apple Maps MKLocalSearch for restaurant discovery", category: .restaurant)
         
         // Build search query
-        var searchQuery = "restaurant"
-        if let query = query, !query.isEmpty {
-            let lowerQuery = query.lowercased()
-            
-            if lowerQuery.contains("vegetarian") || lowerQuery.contains("vegan") {
-                // For vegetarian, search for restaurants and filter client-side
-                searchQuery = "restaurant vegetarian"
-            } else {
-                // Map common cuisine types
-                let cuisineMap: [String: String] = [
-                    "italian": "Italian restaurant",
-                    "indian": "Indian restaurant",
-                    "chinese": "Chinese restaurant",
-                    "mexican": "Mexican restaurant",
-                    "thai": "Thai restaurant",
-                    "japanese": "Japanese restaurant",
-                    "french": "French restaurant",
-                    "american": "American restaurant",
-                    "mediterranean": "Mediterranean restaurant",
-                    "greek": "Greek restaurant"
-                ]
-                
-                if let mappedCuisine = cuisineMap[lowerQuery] {
-                    searchQuery = mappedCuisine
-                } else {
-                    searchQuery = "restaurant \(query)"
-                }
-            }
-        }
+        let searchQuery = buildSearchQuery(from: query)
         
         logger.debug("MKLocalSearch query: '\(searchQuery)' near (\(location.coordinate.latitude), \(location.coordinate.longitude))", category: .restaurant)
         
         // Create search request
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = searchQuery
+        
+        // Use MKPointOfInterestFilter to restrict to restaurant categories (Apple's recommended approach)
+        // This filters at the API level for better performance and accuracy
+        let restaurantCategories: [MKPointOfInterestCategory] = [
+            .restaurant,
+            .cafe,
+            .bakery,
+            .brewery,
+            .foodMarket,
+            .winery
+        ]
+        request.pointOfInterestFilter = MKPointOfInterestFilter(including: restaurantCategories)
+        
         request.region = MKCoordinateRegion(
             center: location.coordinate,
             latitudinalMeters: Double(radius * 2), // MKLocalSearch uses diameter
             longitudinalMeters: Double(radius * 2)
         )
-        request.resultTypes = [.pointOfInterest]
+        // resultTypes can be omitted when using pointOfInterestFilter
         
         // Perform search
         let search = MKLocalSearch(request: request)
@@ -113,101 +145,24 @@ final class RestaurantDiscoveryService {
             
             logger.debug("Apple Maps returned \(response.mapItems.count) results", category: .restaurant)
             
-            // Filter and map results
-            var restaurants: [Restaurant] = []
-            
-            for mapItem in response.mapItems {
-                // Get location
-                guard let itemLocation = mapItem.placemark.location else {
-                    continue
+            // Map and filter results
+            let restaurants = response.mapItems
+                .compactMap { mapItem -> Restaurant? in
+                    guard let itemLocation = mapItem.placemark.location,
+                          location.distance(from: itemLocation) <= Double(radius),
+                          RestaurantMapper.isRestaurant(mapItem) else {
+                        return nil
+                    }
+                    // Debug: Log all available data for first restaurant (uncomment to see all data)
+                    // if restaurants.isEmpty {
+                    //     RestaurantMapper.logAllAvailableData(mapItem, logger: logger)
+                    // }
+                    return RestaurantMapper.map(mapItem, query: query, location: location)
                 }
-                
-                // Filter by radius
-                let distance = location.distance(from: itemLocation)
-                guard distance <= Double(radius) else {
-                    continue
+                .prefix(limit)
+                .sorted { r1, r2 in
+                    location.distance(from: r1.coordinates) < location.distance(from: r2.coordinates)
                 }
-                
-                // Only include restaurants (check point of interest category if available)
-                let category = mapItem.pointOfInterestCategory
-                let isRestaurantCategory: Bool
-                if let category = category {
-                    isRestaurantCategory = category == .restaurant || 
-                                          category == .bakery || 
-                                          category == .brewery || 
-                                          category == .cafe ||
-                                          category == .foodMarket ||
-                                          category == .winery
-                } else {
-                    // If no category, check if name contains restaurant-related keywords
-                    let name = (mapItem.name ?? "").lowercased()
-                    isRestaurantCategory = name.contains("restaurant") ||
-                                         name.contains("cafe") ||
-                                         name.contains("diner") ||
-                                         name.contains("bistro") ||
-                                         name.contains("kitchen") ||
-                                         name.contains("grill")
-                }
-                
-                guard isRestaurantCategory else {
-                    continue
-                }
-                
-                // Build address string
-                let addressParts = [
-                    mapItem.placemark.subThoroughfare,
-                    mapItem.placemark.thoroughfare,
-                    mapItem.placemark.locality,
-                    mapItem.placemark.administrativeArea,
-                    mapItem.placemark.postalCode
-                ].compactMap { $0 }
-                let address = addressParts.joined(separator: ", ")
-                
-                // Extract phone number
-                let phone = mapItem.phoneNumber ?? ""
-                
-                // Determine cuisine from name/placemark
-                let name = mapItem.name ?? "Restaurant"
-                let cuisine = determineCuisine(from: name, category: category ?? .restaurant)
-                
-                // Determine if vegetarian-friendly
-                let isVegetarianFriendly = isVegetarianFriendlyRestaurant(name: name, cuisine: cuisine, query: query)
-                
-                // Create restaurant
-                let restaurant = Restaurant(
-                    id: mapItem.placemark.location?.coordinate.latitude.description ?? UUID().uuidString,
-                    name: name,
-                    cuisine: cuisine,
-                    rating: extractRating(from: mapItem), // Apple Maps doesn't provide ratings directly
-                    priceLevel: extractPriceLevel(from: mapItem),
-                    address: address.isEmpty ? "Address not available" : address,
-                    phone: phone.isEmpty ? "Phone not available" : phone,
-                    isVegetarianFriendly: isVegetarianFriendly,
-                    vegetarianOptionsCount: isVegetarianFriendly ? 10 : 5, // Estimate
-                    reservationProvider: "OpenTable", // Default
-                    coordinates: itemLocation
-                )
-                
-                restaurants.append(restaurant)
-                
-                // Stop if we have enough results
-                if restaurants.count >= limit {
-                    break
-                }
-            }
-            
-            // Sort by distance (closest first)
-            restaurants.sort { restaurant1, restaurant2 in
-                let dist1 = location.distance(from: restaurant1.coordinates)
-                let dist2 = location.distance(from: restaurant2.coordinates)
-                return dist1 < dist2
-            }
-            
-            // Filter for vegetarian if requested
-            if let query = query, query.lowercased().contains("vegetarian") || query.lowercased().contains("vegan") {
-                restaurants = restaurants.filter { $0.isVegetarianFriendly }
-                logger.debug("Filtered to \(restaurants.count) vegetarian-friendly restaurants", category: .restaurant)
-            }
             
             logger.debug("Restaurant search completed: found \(restaurants.count) restaurants", category: .restaurant)
             
@@ -223,89 +178,29 @@ final class RestaurantDiscoveryService {
         }
     }
     
-    // MARK: - Helper Functions for Apple Maps
+    // MARK: - Helper Functions
     
-    /// Determines cuisine type from restaurant name and category.
-    private func determineCuisine(from name: String, category: MKPointOfInterestCategory) -> String {
-        let lowerName = name.lowercased()
-        
-        // Common cuisine keywords
-        let cuisineKeywords: [String: String] = [
-            "italian": "Italian",
-            "pizza": "Italian",
-            "pasta": "Italian",
-            "indian": "Indian",
-            "curry": "Indian",
-            "chinese": "Chinese",
-            "sushi": "Japanese",
-            "japanese": "Japanese",
-            "thai": "Thai",
-            "mexican": "Mexican",
-            "taco": "Mexican",
-            "french": "French",
-            "mediterranean": "Mediterranean",
-            "greek": "Greek",
-            "veggie": "Vegetarian",
-            "vegetarian": "Vegetarian",
-            "vegan": "Vegan",
-            "cafe": "Cafe",
-            "bakery": "Bakery"
-        ]
-        
-        for (keyword, cuisine) in cuisineKeywords {
-            if lowerName.contains(keyword) {
-                return cuisine
-            }
+    /// Builds search query string from optional query parameter.
+    private func buildSearchQuery(from query: String?) -> String {
+        guard let query = query, !query.isEmpty else {
+            return "restaurant"
         }
         
-        // Fallback based on category
-        switch category {
-        case .bakery:
-            return "Bakery"
-        case .cafe:
-            return "Cafe"
-        default:
-            return "Restaurant"
-        }
-    }
-    
-    /// Determines if restaurant is vegetarian-friendly.
-    private func isVegetarianFriendlyRestaurant(name: String, cuisine: String, query: String?) -> Bool {
-        let lowerName = name.lowercased()
-        let lowerCuisine = cuisine.lowercased()
+        let lowerQuery = query.lowercased()
         
-        // Check name for vegetarian indicators
-        if lowerName.contains("vegetarian") || 
-           lowerName.contains("vegan") || 
-           lowerName.contains("veggie") ||
-           lowerName.contains("green") ||
-           lowerName.contains("plant") {
-            return true
+        if lowerQuery.contains("vegetarian") || lowerQuery.contains("vegan") {
+            return "restaurant vegetarian"
         }
         
-        // Check cuisine for vegetarian-friendly types
-        let vegetarianFriendlyCuisines = ["indian", "mediterranean", "thai", "middle eastern", "ethiopian"]
-        if vegetarianFriendlyCuisines.contains(lowerCuisine) {
-            return true
+        if let mappedCuisine = RestaurantSearchConstants.cuisineMap[lowerQuery] {
+            return mappedCuisine
         }
         
-        return false
+        return "restaurant \(query)"
     }
     
-    /// Extracts rating from map item (Apple Maps doesn't provide ratings, so we estimate).
-    private func extractRating(from mapItem: MKMapItem) -> Double {
-        // Apple Maps doesn't provide ratings directly
-        // For now, return a default good rating
-        // In the future, could integrate with Yelp API or similar for ratings
-        return 4.0 + Double.random(in: 0.0...0.8) // 4.0 to 4.8 range
-    }
+    // MARK: - Legacy Helper Functions (kept for backward compatibility)
     
-    /// Extracts price level from map item.
-    private func extractPriceLevel(from mapItem: MKMapItem) -> String {
-        // Apple Maps doesn't provide price level directly
-        // Could infer from category or name, but for now return default
-        return "$$"
-    }
     
     /// Mock implementation for development/testing when API key is not available.
     private func searchRestaurantsMock(
@@ -318,24 +213,20 @@ final class RestaurantDiscoveryService {
         // Jersey City, NJ is around 40.7178, -74.0431
         // Pittsburgh, PA is around 40.4406, -79.9959
         let cityName: String
-        let stateCode: String
         let areaCode: String
         if location.coordinate.latitude > 40.5 && location.coordinate.latitude < 40.8 &&
            location.coordinate.longitude > -74.1 && location.coordinate.longitude < -73.9 {
             // New Jersey / New York area
             cityName = "Jersey City, NJ"
-            stateCode = "NJ"
             areaCode = "201"
         } else if location.coordinate.latitude > 40.3 && location.coordinate.latitude < 40.6 &&
                   location.coordinate.longitude > -80.1 && location.coordinate.longitude < -79.8 {
             // Pittsburgh area
             cityName = "Pittsburgh, PA"
-            stateCode = "PA"
             areaCode = "412"
         } else {
             // Default/Generic
             cityName = "Local Area"
-            stateCode = ""
             areaCode = "555"
         }
         
@@ -345,52 +236,40 @@ final class RestaurantDiscoveryService {
                 id: "restaurant-1",
                 name: "Green Leaf Bistro",
                 cuisine: "Vegetarian/Organic",
-                rating: 4.7,
-                priceLevel: "$$",
                 address: "123 Main St, \(cityName)",
                 phone: "+1-\(areaCode)-555-0101",
                 isVegetarianFriendly: true,
                 vegetarianOptionsCount: 15,
-                reservationProvider: "OpenTable",
                 coordinates: CLLocation(latitude: location.coordinate.latitude + 0.01, longitude: location.coordinate.longitude + 0.01)
             ),
             Restaurant(
                 id: "restaurant-2",
                 name: "Veggie Garden",
                 cuisine: "Vegetarian/Asian Fusion",
-                rating: 4.5,
-                priceLevel: "$$",
                 address: "456 Oak Ave, \(cityName)",
                 phone: "+1-\(areaCode)-555-0102",
                 isVegetarianFriendly: true,
                 vegetarianOptionsCount: 20,
-                reservationProvider: "Rezzy",
                 coordinates: CLLocation(latitude: location.coordinate.latitude + 0.015, longitude: location.coordinate.longitude - 0.01)
             ),
             Restaurant(
                 id: "restaurant-3",
                 name: "Farm to Table",
                 cuisine: "American/Organic",
-                rating: 4.6,
-                priceLevel: "$$$",
                 address: "789 Market St, \(cityName)",
                 phone: "+1-\(areaCode)-555-0103",
                 isVegetarianFriendly: true,
                 vegetarianOptionsCount: 12,
-                reservationProvider: "OpenTable",
                 coordinates: CLLocation(latitude: location.coordinate.latitude - 0.01, longitude: location.coordinate.longitude + 0.015)
             ),
             Restaurant(
                 id: "restaurant-4",
                 name: "Mediterranean Delight",
                 cuisine: "Mediterranean",
-                rating: 4.4,
-                priceLevel: "$$",
                 address: "321 Pine St, \(cityName)",
                 phone: "+1-\(areaCode)-555-0104",
                 isVegetarianFriendly: true,
                 vegetarianOptionsCount: 18,
-                reservationProvider: "Rezzy",
                 coordinates: CLLocation(latitude: location.coordinate.latitude + 0.02, longitude: location.coordinate.longitude)
             )
         ]
@@ -410,8 +289,10 @@ final class RestaurantDiscoveryService {
             location.distance(from: restaurant.coordinates) <= Double(radius)
         }
         
-        // Sort by rating (highest first)
-        filtered.sort { $0.rating > $1.rating }
+        // Sort by distance (closest first)
+        filtered.sort { 
+            location.distance(from: $0.coordinates) < location.distance(from: $1.coordinates)
+        }
         
         let results = Array(filtered.prefix(limit))
         
@@ -421,18 +302,16 @@ final class RestaurantDiscoveryService {
     }
     
     
-    /// Finds the highest rated restaurant matching criteria.
+    /// Finds the closest restaurant matching criteria.
     ///
     /// - Parameters:
     ///   - location: The location to search near
     ///   - vegetarianRequired: Whether vegetarian options are required
-    ///   - minRating: Minimum rating (default: 4.0)
-    /// - Returns: The highest rated matching restaurant, or nil if none found
+    /// - Returns: The closest matching restaurant, or nil if none found
     /// - Throws: Errors from network or API
     func findBestRestaurant(
         near location: CLLocation,
-        vegetarianRequired: Bool = true,
-        minRating: Double = 4.0
+        vegetarianRequired: Bool = true
     ) async throws -> Restaurant? {
         let restaurants = try await searchRestaurants(
             near: location,
@@ -440,9 +319,12 @@ final class RestaurantDiscoveryService {
             limit: 20
         )
         
-        let filtered = restaurants.filter { $0.rating >= minRating && (!vegetarianRequired || $0.isVegetarianFriendly) }
+        let filtered = restaurants.filter { !vegetarianRequired || $0.isVegetarianFriendly }
         
-        return filtered.first
+        // Return closest restaurant
+        return filtered.min { 
+            location.distance(from: $0.coordinates) < location.distance(from: $1.coordinates)
+        }
     }
 }
 
@@ -451,34 +333,28 @@ struct Restaurant: Codable, Identifiable {
     let id: String
     let name: String
     let cuisine: String
-    let rating: Double
-    let priceLevel: String // "$", "$$", "$$$", "$$$$"
     let address: String
     let phone: String
     let isVegetarianFriendly: Bool
     let vegetarianOptionsCount: Int
-    let reservationProvider: String // "OpenTable", "Rezzy", etc.
     let coordinates: CLLocation
     
     enum CodingKeys: String, CodingKey {
-        case id, name, cuisine, rating, priceLevel, address, phone
-        case isVegetarianFriendly, vegetarianOptionsCount, reservationProvider
+        case id, name, cuisine, address, phone
+        case isVegetarianFriendly, vegetarianOptionsCount
         case latitude, longitude
     }
     
-    init(id: String, name: String, cuisine: String, rating: Double, priceLevel: String,
+    init(id: String, name: String, cuisine: String,
          address: String, phone: String, isVegetarianFriendly: Bool,
-         vegetarianOptionsCount: Int, reservationProvider: String, coordinates: CLLocation) {
+         vegetarianOptionsCount: Int, coordinates: CLLocation) {
         self.id = id
         self.name = name
         self.cuisine = cuisine
-        self.rating = rating
-        self.priceLevel = priceLevel
         self.address = address
         self.phone = phone
         self.isVegetarianFriendly = isVegetarianFriendly
         self.vegetarianOptionsCount = vegetarianOptionsCount
-        self.reservationProvider = reservationProvider
         self.coordinates = coordinates
     }
     
@@ -487,13 +363,10 @@ struct Restaurant: Codable, Identifiable {
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         cuisine = try container.decode(String.self, forKey: .cuisine)
-        rating = try container.decode(Double.self, forKey: .rating)
-        priceLevel = try container.decode(String.self, forKey: .priceLevel)
         address = try container.decode(String.self, forKey: .address)
         phone = try container.decode(String.self, forKey: .phone)
         isVegetarianFriendly = try container.decode(Bool.self, forKey: .isVegetarianFriendly)
         vegetarianOptionsCount = try container.decode(Int.self, forKey: .vegetarianOptionsCount)
-        reservationProvider = try container.decode(String.self, forKey: .reservationProvider)
         let lat = try container.decode(Double.self, forKey: .latitude)
         let lon = try container.decode(Double.self, forKey: .longitude)
         coordinates = CLLocation(latitude: lat, longitude: lon)
@@ -504,13 +377,10 @@ struct Restaurant: Codable, Identifiable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(cuisine, forKey: .cuisine)
-        try container.encode(rating, forKey: .rating)
-        try container.encode(priceLevel, forKey: .priceLevel)
         try container.encode(address, forKey: .address)
         try container.encode(phone, forKey: .phone)
         try container.encode(isVegetarianFriendly, forKey: .isVegetarianFriendly)
         try container.encode(vegetarianOptionsCount, forKey: .vegetarianOptionsCount)
-        try container.encode(reservationProvider, forKey: .reservationProvider)
         try container.encode(coordinates.coordinate.latitude, forKey: .latitude)
         try container.encode(coordinates.coordinate.longitude, forKey: .longitude)
     }

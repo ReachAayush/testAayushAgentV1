@@ -2,8 +2,6 @@
 //  RestaurantReservationAction.swift
 //  AayushTestAppV1
 //
-//  Created on 2024
-//  Copyright © 2024. All rights reserved.
 //
 
 import Foundation
@@ -51,14 +49,53 @@ struct RestaurantReservationAction: AgentAction {
         // Directly search for restaurants (no LLM needed)
         logger.debug("Searching restaurants near location (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))", category: .action)
         
-        let restaurants = try await restaurantService.searchRestaurants(
-            near: userLocation,
-            query: "vegetarian",
-            radius: 5000,
-            limit: 10
+        // Start with initial radius, retry with larger radius if not enough results after deduplication
+        let minDesiredResults = 5
+        var restaurants: [Restaurant] = []
+        var searchRadius = 5000 // Start with 5km
+        let maxRadius = 20000 // Maximum radius to try (20km)
+        
+        // Use filters to ensure quality results (vegetarian)
+        // Note: We use both query and filter - query helps Apple Maps find relevant restaurants,
+        // and the filter ensures we only keep vegetarian-friendly ones
+        let filters = RestaurantSearchFilters(
+            vegetarianRequired: true
         )
         
-        logger.debug("Restaurant search completed, found \(restaurants.count) restaurants", category: .action)
+        // Search and deduplicate, expanding radius if needed
+        while searchRadius <= maxRadius {
+            restaurants = try await restaurantService.searchRestaurants(
+                near: userLocation,
+                query: "vegetarian restaurants", // Help Apple Maps find vegetarian-friendly restaurants
+                radius: searchRadius,
+                limit: searchRadius > 5000 ? 25 : 20, // Allow more results for larger searches
+                filters: filters
+            )
+            
+            logger.debug("Restaurant search completed with \(searchRadius)m radius, found \(restaurants.count) restaurants (before deduplication)", category: .action)
+            
+            // Deduplicate restaurants
+            restaurants = RestaurantDeduplicator.deduplicate(restaurants, from: userLocation)
+            
+            logger.debug("After deduplication: \(restaurants.count) unique restaurants", category: .action)
+            
+            // If we have enough unique restaurants, we're done
+            if restaurants.count >= minDesiredResults {
+                break
+            }
+            
+            // Otherwise, expand search radius and try again
+            if searchRadius < maxRadius {
+                let nextRadius = min(searchRadius * 2, maxRadius)
+                logger.debug("Found only \(restaurants.count) unique restaurants, expanding search to \(nextRadius)m radius", category: .action)
+                searchRadius = nextRadius
+            } else {
+                // Reached max radius, use what we have
+                break
+            }
+        }
+        
+        logger.debug("Final restaurant search result: \(restaurants.count) unique restaurants", category: .action)
         
         // Build result message with embedded JSON for UI parsing
         let restaurantsJson = restaurants.map { restaurant in
@@ -66,13 +103,10 @@ struct RestaurantReservationAction: AgentAction {
                 "id": restaurant.id,
                 "name": restaurant.name,
                 "cuisine": restaurant.cuisine,
-                "rating": restaurant.rating,
-                "priceLevel": restaurant.priceLevel,
                 "address": restaurant.address,
                 "phone": restaurant.phone,
                 "isVegetarianFriendly": restaurant.isVegetarianFriendly,
                 "vegetarianOptionsCount": restaurant.vegetarianOptionsCount,
-                "reservationProvider": restaurant.reservationProvider,
                 "latitude": restaurant.coordinates.coordinate.latitude,
                 "longitude": restaurant.coordinates.coordinate.longitude
             ]
@@ -88,4 +122,5 @@ struct RestaurantReservationAction: AgentAction {
         
         return .text(finalMessage)
     }
+    
 }

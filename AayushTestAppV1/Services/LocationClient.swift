@@ -2,8 +2,6 @@
 //  LocationClient.swift
 //  AayushTestAppV1
 //
-//  Created on 2024
-//  Copyright © 2024. All rights reserved.
 //
 
 import Foundation
@@ -90,19 +88,30 @@ final class LocationClient: NSObject, ObservableObject {
         // - location.fetch.initiated (counter) - location fetch attempts
         // For now: logger.debug("Location fetch initiated", category: .location)
         let logger = LoggingService.shared
-        let fetchStartTime = Date()
         logger.debug("Location fetch initiated", category: .location)
         
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CLLocation, Error>) in
+            // Cancel any existing request to avoid continuation leaks
+            if let existingContinuation = locationUpdateContinuation {
+                existingContinuation.resume(throwing: NSError(
+                    domain: "LocationClient",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Location request cancelled by new request."]
+                ))
+            }
+            
             // Store continuation to resume when location is received
             locationUpdateContinuation = continuation
             locationManager.requestLocation()
             
             // Use a timeout to avoid waiting indefinitely
-            Task {
+            Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 10_000_000_000) // 10 seconds
-                if let continuation = locationUpdateContinuation {
-                    locationUpdateContinuation = nil
+                
+                // Atomically check and clear continuation to prevent double-resume
+                guard let self = self else { return }
+                if let continuation = self.locationUpdateContinuation {
+                    self.locationUpdateContinuation = nil
                     // TODO: OPERATIONAL METRICS - Track location fetch timeouts
                     // Metrics to emit:
                     // - location.fetch.timeout (counter) - location fetch timeouts
@@ -135,8 +144,12 @@ extension LocationClient: CLLocationManagerDelegate {
             // For now: logger.debug("Location fetch succeeded: accuracy=\(location.horizontalAccuracy)m", category: .location)
             logger.debug("Location fetch succeeded: accuracy=\(String(format: "%.1f", location.horizontalAccuracy))m", category: .location)
             currentLocation = location
-            locationUpdateContinuation?.resume(returning: location)
-            locationUpdateContinuation = nil
+            
+            // Atomically check and clear continuation to prevent double-resume
+            if let continuation = locationUpdateContinuation {
+                locationUpdateContinuation = nil
+                continuation.resume(returning: location)
+            }
         }
     }
     
@@ -148,18 +161,28 @@ extension LocationClient: CLLocationManagerDelegate {
         // For now: logger.debug("Location fetch failed: errorType=\(type(of: error))", category: .location)
         let logger = LoggingService.shared
         logger.debug("Location fetch failed: errorType=\(type(of: error))", category: .location)
-        locationUpdateContinuation?.resume(throwing: error)
-        locationUpdateContinuation = nil
+        
+        // Atomically check and clear continuation to prevent double-resume
+        if let continuation = locationUpdateContinuation {
+            locationUpdateContinuation = nil
+            continuation.resume(throwing: error)
+        }
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        // TODO: OPERATIONAL METRICS - Track location permission status changes
-        // Metrics to emit:
-        // - location.permission.status (gauge) - current permission status
-        // - location.permission.status_change (counter) - permission status changes
-        // For now: logger.debug("Location permission status changed: newStatus=\(manager.authorizationStatus.rawValue)", category: .location)
+        let newStatus = manager.authorizationStatus
         let logger = LoggingService.shared
-        logger.debug("Location permission status changed: newStatus=\(manager.authorizationStatus.rawValue)", category: .location)
-        authorizationStatus = manager.authorizationStatus
+        
+        // Only log if the status actually changed
+        if newStatus != authorizationStatus {
+            // TODO: OPERATIONAL METRICS - Track location permission status changes
+            // Metrics to emit:
+            // - location.permission.status (gauge) - current permission status
+            // - location.permission.status_change (counter) - permission status changes
+            logger.debug("Location permission status changed: oldStatus=\(authorizationStatus.rawValue), newStatus=\(newStatus.rawValue)", category: .location)
+            authorizationStatus = newStatus
+        }
+        // Note: iOS may call this delegate method even when status hasn't changed
+        // (e.g., during app lifecycle events), so we only update and log on actual changes
     }
 }

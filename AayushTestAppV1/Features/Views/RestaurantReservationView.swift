@@ -2,8 +2,6 @@
 //  RestaurantReservationView.swift
 //  AayushTestAppV1
 //
-//  Created on 2024
-//  Copyright © 2024. All rights reserved.
 //
 
 import SwiftUI
@@ -25,6 +23,7 @@ struct RestaurantReservationView: View {
     @State private var selectedRestaurant: Restaurant?
     @State private var showingRestaurantPicker = false
     @State private var transitTimes: [String: Int] = [:] // Restaurant ID -> transit minutes
+    @State private var isSearching = false
     
     // Services
     private let restaurantService = RestaurantDiscoveryService()
@@ -96,30 +95,60 @@ struct RestaurantReservationView: View {
                                                 .foregroundColor(SteelersTheme.steelersGold)
                                         }
                                         
-                                        VStack(alignment: .leading, spacing: 4) {
+                                        VStack(alignment: .leading, spacing: 6) {
                                             Text(selected.name)
                                                 .font(.headline)
                                                 .foregroundColor(SteelersTheme.textPrimary)
+                                            
                                             Text(selected.cuisine)
                                                 .font(.subheadline)
                                                 .foregroundColor(SteelersTheme.textSecondary)
-                                            HStack(spacing: 6) {
-                                                Text("⭐ \(String(format: "%.1f", selected.rating))")
-                                                Text("•")
-                                                Text(selected.priceLevel)
-                                                if let currentLoc = currentLocation {
-                                                    let transitMinutes = transitTimes[selected.id] ?? 0
+                                            
+                                            // Vegetarian Badge
+                                            if selected.isVegetarianFriendly {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "leaf.fill")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.green)
+                                                    Text("Vegetarian")
+                                                        .font(.caption2)
+                                                }
+                                            }
+                                            
+                                            // Distance and Transit Time
+                                            if let currentLoc = currentLocation {
+                                                let distanceMeters = currentLoc.distance(from: selected.coordinates)
+                                                let distanceMiles = distanceMeters / 1609.34
+                                                let transitMinutes = transitTimes[selected.id] ?? 0
+                                                
+                                                HStack(spacing: 8) {
+                                                    HStack(spacing: 4) {
+                                                        Image(systemName: "mappin.circle.fill")
+                                                            .font(.caption2)
+                                                            .foregroundColor(SteelersTheme.steelersGold)
+                                                        Text(String(format: "%.1f mi", distanceMiles))
+                                                    }
+                                                    
                                                     if transitMinutes > 0 {
-                                                        HStack(spacing: 2) {
+                                                        HStack(spacing: 4) {
                                                             Image(systemName: "tram.fill")
                                                                 .font(.caption2)
+                                                                .foregroundColor(SteelersTheme.steelersGold)
                                                             Text("\(transitMinutes) min")
                                                         }
                                                     }
                                                 }
+                                                .font(.caption)
+                                                .foregroundColor(SteelersTheme.textSecondary)
                                             }
-                                            .font(.caption)
-                                            .foregroundColor(SteelersTheme.steelersGold.opacity(0.8))
+                                            
+                                            // Address
+                                            if !selected.address.isEmpty && selected.address != "Address not available" {
+                                                Text(selected.address)
+                                                    .font(.caption)
+                                                    .foregroundColor(SteelersTheme.textSecondary)
+                                                    .lineLimit(2)
+                                            }
                                         }
                                         
                                         Spacer()
@@ -219,7 +248,7 @@ struct RestaurantReservationView: View {
                                     .font(.headline)
                                     .foregroundColor(SteelersTheme.textPrimary)
                             }
-                            Text("The AI will search for 5-10 high-rated restaurants with vegetarian options near your location. Choose your favorite and open it in Apple Maps to see reservation options (OpenTable, Resy, etc.).")
+                            Text("The AI will search for 5-10 high-rated restaurants with vegetarian options near your location. Results are grouped by distance. Choose your favorite and open it in Google Maps to see available reservation options.")
                                 .font(.caption)
                                 .foregroundColor(SteelersTheme.textSecondary)
                         }
@@ -228,6 +257,28 @@ struct RestaurantReservationView: View {
                         .padding(.horizontal, 20)
                     }
                     .padding(.bottom, 40)
+                }
+                
+                // Loading overlay - shows when searching
+                if isSearching || agent.isBusy {
+                    ZStack {
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                        
+                        VStack(spacing: 20) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .tint(SteelersTheme.steelersGold)
+                            
+                            Text("Finding restaurants...")
+                                .font(.headline)
+                                .foregroundColor(SteelersTheme.textPrimary)
+                        }
+                        .padding(30)
+                        .background(SteelersTheme.darkGray)
+                        .cornerRadius(16)
+                        .shadow(radius: 10)
+                    }
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -267,6 +318,9 @@ struct RestaurantReservationView: View {
     }
     
     private func findRestaurants() async {
+        // Show loading indicator
+        isSearching = true
+        
         // Reset state
         restaurantOptions = []
         selectedRestaurant = nil
@@ -275,6 +329,7 @@ struct RestaurantReservationView: View {
         do {
             try await locationClient.requestAccessIfNeeded()
         } catch {
+            isSearching = false
             agent.errorMessage = "Location access is required to find nearby restaurants."
             return
         }
@@ -288,6 +343,7 @@ struct RestaurantReservationView: View {
                 location = try await locationClient.getCurrentLocation()
                 currentLocation = location
             } catch {
+                isSearching = false
                 agent.errorMessage = "Unable to get your location. Please try again."
                 return
             }
@@ -307,9 +363,17 @@ struct RestaurantReservationView: View {
             parseRestaurantsFromOutput(agent.lastOutput)
         }
         
-        // Ensure we show 5-10 options (filter to top rated if we got more)
-        // Sort by rating first
-        restaurantOptions = restaurantOptions.sorted { $0.rating > $1.rating }
+        // Deduplicate restaurants (remove multiple branches of the same chain)
+        // Note: Action already deduplicates, but this provides a safety net
+        restaurantOptions = RestaurantDeduplicator.deduplicate(restaurantOptions, from: currentLocation ?? location)
+        
+        // Ensure we show 5-10 options (sort by distance if we got more)
+        // Sort by distance first
+        if let currentLoc = currentLocation {
+            restaurantOptions = restaurantOptions.sorted { 
+                currentLoc.distance(from: $0.coordinates) < currentLoc.distance(from: $1.coordinates)
+            }
+        }
         
         // If we have more than 10, take top 10
         if restaurantOptions.count > 10 {
@@ -322,12 +386,16 @@ struct RestaurantReservationView: View {
             logger.debug("Found \(restaurantOptions.count) restaurant option(s). Would prefer 5-10 if available.", category: .restaurant)
         }
         
-        // Calculate transit times for all restaurants
+        // Calculate transit times for all restaurants in background
         if let currentLoc = currentLocation {
+            transitTimes = [:] // Reset transit times
             Task {
                 await calculateTransitTimes(for: restaurantOptions, from: currentLoc)
             }
         }
+        
+        // Hide loading indicator
+        isSearching = false
     }
     
     /// Parses restaurant data from LLM output (embedded as JSON comment).
@@ -350,13 +418,10 @@ struct RestaurantReservationView: View {
             guard let id = restaurantDict["id"] as? String,
                   let name = restaurantDict["name"] as? String,
                   let cuisine = restaurantDict["cuisine"] as? String,
-                  let rating = restaurantDict["rating"] as? Double,
-                  let priceLevel = restaurantDict["priceLevel"] as? String,
                   let address = restaurantDict["address"] as? String,
                   let phone = restaurantDict["phone"] as? String,
                   let isVegetarianFriendly = restaurantDict["isVegetarianFriendly"] as? Bool,
                   let vegetarianOptionsCount = restaurantDict["vegetarianOptionsCount"] as? Int,
-                  let reservationProvider = restaurantDict["reservationProvider"] as? String,
                   let lat = restaurantDict["latitude"] as? Double,
                   let lon = restaurantDict["longitude"] as? Double else {
                 return nil
@@ -367,13 +432,10 @@ struct RestaurantReservationView: View {
                 id: id,
                 name: name,
                 cuisine: cuisine,
-                rating: rating,
-                priceLevel: priceLevel,
                 address: address,
                 phone: phone,
                 isVegetarianFriendly: isVegetarianFriendly,
                 vegetarianOptionsCount: vegetarianOptionsCount,
-                reservationProvider: reservationProvider,
                 coordinates: coordinates
             )
         }
@@ -416,12 +478,23 @@ struct RestaurantReservationView: View {
     /// Opens Google Maps with the restaurant location, which will show the restaurant place card.
     /// Google Maps displays detailed restaurant information including reservation options.
     private func openInGoogleMaps(restaurant: Restaurant) {
-        // URL encode restaurant name for search
-        let restaurantNameEncoded = restaurant.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? restaurant.name
+        // Build search query with name and address for better reliability
+        // This helps especially with restaurants that have special characters or common names
+        var searchQuery = restaurant.name
         
-        // Try multiple Google Maps URL formats
-        // Format 1: Search by restaurant name (most reliable for showing restaurant place card)
-        let searchQuery = "\(restaurantNameEncoded) restaurant"
+        // Add address if available to make search more specific
+        if !restaurant.address.isEmpty && restaurant.address != "Address not available" {
+            // Extract just the street address (first part before city/state)
+            let addressParts = restaurant.address.split(separator: ",")
+            if let streetAddress = addressParts.first, !streetAddress.trimmingCharacters(in: .whitespaces).isEmpty {
+                searchQuery += " \(streetAddress.trimmingCharacters(in: .whitespaces))"
+            } else {
+                // If we can't parse, just use the full address
+                searchQuery += " \(restaurant.address)"
+            }
+        }
+        
+        // URL encode the search query
         let encodedQuery = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? searchQuery
         
         // Try Google Maps app first (comgooglemaps:// URL scheme)
@@ -454,6 +527,15 @@ struct RestaurantPickerView: View {
     let currentLocation: CLLocation?
     @Binding var transitTimes: [String: Int]
     
+    // Group restaurants by distance
+    private var groupedRestaurants: RestaurantGrouper.GroupedRestaurants {
+        guard let location = currentLocation else {
+            // If no location, return empty groups
+            return RestaurantGrouper.GroupedRestaurants(groups: [])
+        }
+        return RestaurantGrouper.group(restaurants, from: location)
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -465,7 +547,12 @@ struct RestaurantPickerView: View {
                 .ignoresSafeArea()
                 
                 List {
-                    ForEach(restaurants) { restaurant in
+                    ForEach(groupedRestaurants.groups) { group in
+                        Section(header: Text(group.title)
+                            .font(.headline)
+                            .foregroundColor(SteelersTheme.steelersGold)
+                            .textCase(nil)) {
+                            ForEach(group.restaurants) { restaurant in
                         Button {
                             selectedRestaurant = restaurant
                             dismiss()
@@ -480,30 +567,70 @@ struct RestaurantPickerView: View {
                                         .foregroundColor(SteelersTheme.steelersGold)
                                 }
                                 
-                                VStack(alignment: .leading, spacing: 4) {
+                                VStack(alignment: .leading, spacing: 6) {
                                     Text(restaurant.name)
                                         .font(.headline)
                                         .foregroundColor(SteelersTheme.textPrimary)
+                                    
                                     Text(restaurant.cuisine)
                                         .font(.subheadline)
                                         .foregroundColor(SteelersTheme.textSecondary)
-                                    HStack(spacing: 6) {
-                                        Text("⭐ \(String(format: "%.1f", restaurant.rating))")
-                                        Text("•")
-                                        Text(restaurant.priceLevel)
-                                        if let currentLoc = currentLocation {
-                                            let transitMinutes = transitTimes[restaurant.id] ?? 0
+                                    
+                                    // Vegetarian Badge
+                                    if restaurant.isVegetarianFriendly {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "leaf.fill")
+                                                .font(.caption2)
+                                                .foregroundColor(.green)
+                                            Text("Vegetarian")
+                                                .font(.caption2)
+                                        }
+                                    }
+                                    
+                                    // Distance and Transit Time
+                                    if let currentLoc = currentLocation {
+                                        let distanceMeters = currentLoc.distance(from: restaurant.coordinates)
+                                        let distanceMiles = distanceMeters / 1609.34
+                                        let transitMinutes = transitTimes[restaurant.id] ?? 0
+                                        
+                                        HStack(spacing: 8) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "mappin.circle.fill")
+                                                    .font(.caption2)
+                                                    .foregroundColor(SteelersTheme.steelersGold)
+                                                Text(String(format: "%.1f mi", distanceMiles))
+                                            }
+                                            
                                             if transitMinutes > 0 {
-                                                HStack(spacing: 2) {
+                                                HStack(spacing: 4) {
                                                     Image(systemName: "tram.fill")
                                                         .font(.caption2)
+                                                        .foregroundColor(SteelersTheme.steelersGold)
                                                     Text("\(transitMinutes) min")
+                                                }
+                                            } else {
+                                                // Show "calculating..." or nothing while transit is being calculated
+                                                if restaurants.count > 0 && transitTimes.count < restaurants.count {
+                                                    HStack(spacing: 4) {
+                                                        ProgressView()
+                                                            .scaleEffect(0.7)
+                                                        Text("transit")
+                                                            .font(.caption2)
+                                                    }
                                                 }
                                             }
                                         }
+                                        .font(.caption)
+                                        .foregroundColor(SteelersTheme.textSecondary)
                                     }
-                                    .font(.caption)
-                                    .foregroundColor(SteelersTheme.steelersGold.opacity(0.8))
+                                    
+                                    // Address
+                                    if !restaurant.address.isEmpty && restaurant.address != "Address not available" {
+                                        Text(restaurant.address)
+                                            .font(.caption)
+                                            .foregroundColor(SteelersTheme.textSecondary)
+                                            .lineLimit(1)
+                                    }
                                 }
                                 
                                 Spacer()
@@ -516,6 +643,8 @@ struct RestaurantPickerView: View {
                             .padding(.vertical, 8)
                         }
                         .listRowBackground(SteelersTheme.cardBackground)
+                            }
+                        }
                     }
                 }
                 .scrollContentBackground(.hidden)

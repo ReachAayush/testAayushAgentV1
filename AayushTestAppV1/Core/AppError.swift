@@ -2,8 +2,6 @@
 //  AppError.swift
 //  AayushTestAppV1
 //
-//  Created on 2024
-//  Copyright © 2024. All rights reserved.
 //
 
 import Foundation
@@ -206,7 +204,6 @@ extension AppError {
         // Try to extract useful information from NSError
         if let nsError = error as NSError? {
             let domain = nsError.domain
-            let code = nsError.code
             
             // Map common error domains
             if domain == NSURLErrorDomain {
