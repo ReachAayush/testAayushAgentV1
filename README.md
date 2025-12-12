@@ -15,6 +15,7 @@ This app follows a **modular, scalable architecture** designed for easy extensio
 - Timezone-aware greetings (morning, afternoon, evening)
 - Support for multiple contacts with custom style hints
 - Per-contact relationship context and tone preferences
+- Favorite contacts integration for quick access
 
 ### 2. **Calendar Integration**
 - View today's schedule from multiple calendars
@@ -26,11 +27,33 @@ This app follows a **modular, scalable architecture** designed for easy extensio
 - Get directions to PATH train stations
 - Location-based nearest station finder
 - Google Maps integration for navigation
+- Manage saved transit stops (add, edit, delete)
+- Default stops included (Hoboken PATH, Christopher St PATH)
 
-### 4. **Favorite Contacts**
+### 4. **Restaurant Reservations**
+- Find high-rated vegetarian restaurants near you
+- Location-based search with expanding radius (5km to 20km)
+- Restaurant deduplication and filtering
+- Integration with Google Maps for directions and reservations
+- Displays restaurant details: name, cuisine, address, phone, vegetarian options
+
+### 5. **Stock Recommendations**
+- AI-powered stock investment insights
+- Separate recommendations for stocks to buy and stocks to avoid
+- Market analysis based on current conditions, news, and trends
+- Structured data with ticker symbols and reasoning
+- JSON-embedded results for easy parsing
+
+### 6. **Favorite Contacts**
 - Manage frequently messaged contacts
 - Per-contact style customization
 - Quick access to personalized actions
+- Persistent storage with UserDefaults
+
+### 7. **User Profile Management**
+- Store user contact information (name, email, phone)
+- Pre-fill forms for reservations and other services
+- Profile completion validation
 
 ## 🚀 Getting Started
 
@@ -76,12 +99,14 @@ The home screen serves as the central hub with action cards for:
 - **Hello**: Generate personalized greeting messages
 - **Today's Schedule**: View calendar events for today
 - **Transit Directions**: Get directions to PATH train stations
+- **Restaurant Reservation**: Find vegetarian restaurants near you
+- **Stock Recommendations**: Get AI-powered investment insights
 
 ### Settings
 Access via toolbar icons:
 - **Calendar Settings** (calendar icon): Select which calendars to use
 - **Manage Favorites** (people icon): Add/edit favorite contacts
-- **LLM Settings** (key icon): Configure AWS credentials or API keys
+- **LLM Settings** (key icon): Configure AWS credentials or API keys (stored securely in Keychain)
 
 ## 🏛️ Architecture Principles
 
@@ -111,9 +136,9 @@ Modern Swift concurrency throughout:
 
 ## 🔧 Adding New Actions
 
-To add a new action:
+The app uses a registry-based pattern for actions, making it easy to add new features:
 
-1. **Create Action Struct**
+1. **Create Action Struct** (if using AgentAction protocol)
 ```swift
 struct MyNewAction: AgentAction {
     let id = "my-new-action"
@@ -130,18 +155,7 @@ struct MyNewAction: AgentAction {
 }
 ```
 
-2. **Add to HomeView**
-```swift
-enum ActionType {
-    case goodMorning
-    case todaySchedule
-    case summarizeDay
-    case respondToText
-    case myNewAction  // Add here
-}
-```
-
-3. **Create View** (if needed)
+2. **Create View**
 ```swift
 struct MyNewActionView: View {
     @ObservedObject var agent: AgentController
@@ -149,12 +163,21 @@ struct MyNewActionView: View {
 }
 ```
 
-4. **Update AgentController** (if special handling needed)
+3. **Add to Action Registry** (`HomeActionRegistry.swift`)
 ```swift
-func run(action: AgentAction) async {
-    // Add custom handling if needed
-}
+AnyHomeAction(item: HomeActionItem(
+    id: "my-new-action",
+    icon: "sparkles",
+    title: "My New Action",
+    subtitle: "Does something cool",
+    gradientColors: [SteelersTheme.steelersGold, SteelersTheme.goldAccent],
+    buildView: { agent, favorites in
+        AnyView(MyNewActionView(agent: agent))
+    }
+))
 ```
+
+The action will automatically appear on the home screen in the order it's added to the registry. See [`UI/DEVELOPING.md`](./AayushTestAppV1/UI/DEVELOPING.md) for more details.
 
 ## 🎨 Design System
 
@@ -169,15 +192,21 @@ The app uses a **Pittsburgh Steelers** themed design system:
 ### Current State
 - ✅ AWS SigV4 signing implemented for Bedrock authentication
 - ✅ Runtime credential configuration via settings UI
-- ⚠️ Credentials stored in plaintext (AppConfig.plist, UserDefaults)
-- ⚠️ No keychain storage for sensitive credentials
+- ✅ **Credentials stored securely in iOS Keychain** (via `CredentialManager`)
+- ✅ Centralized configuration management (via `ConfigurationService`)
+- ✅ Support for both AWS credentials (SigV4) and Bearer token authentication
+- ✅ Priority-based configuration loading (Keychain → UserDefaults → Info.plist → AppConfig.plist)
 
-### Recommended Improvements
-See [`TECH_DEBT.md`](./TECH_DEBT.md) for detailed security improvements:
-1. Migrate credentials to iOS Keychain
-2. Implement credential encryption
-3. Add credential rotation mechanism
-4. Remove hardcoded credentials from source
+### Implementation Details
+- `CredentialManager` handles all Keychain operations with proper encryption
+- `ConfigurationService` provides unified access to configuration with automatic Keychain priority
+- Sensitive credentials (API keys, AWS keys) are never stored in plaintext
+- Non-sensitive configuration can still use Info.plist or AppConfig.plist
+
+### Future Enhancements
+See [`TECH_DEBT.md`](./TECH_DEBT.md) for remaining improvements:
+1. Credential rotation mechanism
+2. Biometric authentication for credential access (optional)
 
 ## 🧪 Testing
 
@@ -188,23 +217,26 @@ xcodebuild test -project AayushTestAppV1.xcodeproj -scheme AayushTestAppV1 -dest
 ```
 
 ### Manual Testing Checklist
-- [ ] Good morning message generation
+- [ ] Hello message generation with favorite contacts
 - [ ] Calendar access and event fetching
-- [ ] Day summary generation
-- [ ] Text response generation (NEW)
+- [ ] Today's schedule viewing
+- [ ] Transit directions to PATH stations
+- [ ] Restaurant search and filtering
+- [ ] Stock recommendation generation
 - [ ] Favorite contact management
-- [ ] Tone profile training
-- [ ] Message sending via Messages app
+- [ ] Transit stops management
+- [ ] LLM settings configuration (Keychain storage)
+- [ ] Calendar selection
 
 ## 🐛 Known Issues
 
 See [`TECH_DEBT.md`](./TECH_DEBT.md) for comprehensive technical debt tracking.
 
 **Current Known Issues**:
-1. **Credential Security**: Credentials stored in plaintext (see Security section)
-2. **Deprecated Code**: Some deprecated components still in codebase
-3. **Error Handling**: Inconsistent error handling patterns
-4. **Test Coverage**: No unit or integration tests
+1. **Test Coverage**: No unit or integration tests (high priority)
+2. **Error Handling**: Some services still need migration to `AppError` pattern
+3. **Logging**: Some services still use print statements instead of `LoggingService`
+4. **Performance**: No caching for LLM responses or calendar events
 
 ## 🚧 Future Enhancements
 
@@ -222,11 +254,25 @@ See [`TECH_DEBT.md`](./TECH_DEBT.md) for a comprehensive inventory of technical 
 
 ## 📚 Dependencies
 
+### iOS Frameworks
 - **SwiftUI**: Native iOS UI framework
 - **EventKit**: Calendar access
 - **MessageUI**: Message composition
+- **MapKit**: Restaurant search and location services
+- **CoreLocation**: Location services for transit and restaurant features
+- **Contacts**: Contact lookup and management
 - **Combine**: Reactive state management
 - **Foundation**: Core Swift functionality
+- **CryptoKit**: AWS SigV4 signing (built-in framework)
+
+### External Services
+- **Amazon Bedrock**: LLM API (via OpenAI-compatible endpoint)
+- **Google Maps**: Transit directions and restaurant navigation
+- **Apple Maps**: Restaurant discovery and search
+
+### Internal Services
+- All code is self-contained with no external package dependencies
+- Uses Swift's built-in frameworks only
 
 ## 👥 Contributing
 

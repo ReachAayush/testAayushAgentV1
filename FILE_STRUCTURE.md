@@ -13,12 +13,26 @@ AayushTestAppV1/
 │   └── ContentView.swift              # Root view with dependency injection
 │
 ├── Core/
-│   └── AgentAction.swift              # Protocol defining agent actions
+│   ├── AgentAction.swift              # Protocol defining agent actions
+│   ├── AppError.swift                 # Structured error types
+│   └── StringExtensions.swift         # String utility extensions
 │
 ├── Services/
 │   ├── LLMClient.swift                # Amazon Bedrock LLM integration
+│   ├── AWSSigV4Signer.swift           # AWS Signature Version 4 signing
 │   ├── CalendarClient.swift           # EventKit calendar access
-│   └── MessagesClient.swift           # Message operations and contact lookup
+│   ├── MessagesClient.swift           # Message operations and contact lookup
+│   ├── LocationClient.swift           # CoreLocation wrapper for location services
+│   ├── ConfigurationService.swift    # Centralized configuration management
+│   ├── CredentialManager.swift        # Keychain-based credential storage
+│   ├── LoggingService.swift           # Structured logging with categories
+│   ├── RestaurantDiscoveryService.swift  # MapKit-based restaurant search
+│   ├── RestaurantFilter.swift        # Restaurant filtering logic
+│   ├── RestaurantDeduplicator.swift   # Deduplication of restaurant results
+│   ├── RestaurantGrouper.swift       # Grouping restaurants by location
+│   ├── RestaurantMapper.swift        # Mapping MapKit results to app models
+│   ├── RestaurantSearchConstants.swift  # Restaurant search constants
+│   └── ReservationService.swift       # Restaurant reservation management
 │
 ├── Controllers/
 │   ├── AgentController.swift          # Main agent orchestration
@@ -26,28 +40,35 @@ AayushTestAppV1/
 │
 ├── Features/
 │   ├── Actions/
-│   │   ├── GoodMorningMessageAction.swift
-│   │   ├── SummarizeDayAction.swift
+│   │   ├── HelloMessageAction.swift
 │   │   ├── TodayScheduleSummaryAction.swift
-│   │   └── RespondToTextAction.swift
+│   │   ├── RestaurantReservationAction.swift
+│   │   └── StockRecommendationAction.swift
 │   │
 │   └── Views/
-│       ├── GoodMorningView.swift
+│       ├── HelloView.swift
 │       ├── ScheduleView.swift
-│       ├── SummaryView.swift
-│       └── RespondToTextView.swift
+│       ├── PATHTrainView.swift
+│       ├── RestaurantReservationView.swift
+│       └── StockRecommendationView.swift
 │
 ├── UI/
 │   ├── HomeView.swift                 # Main navigation hub
+│   ├── HomeActionRegistry.swift       # Action registry for home screen
 │   ├── SteelersTheme.swift            # Design system
 │   ├── CalendarSelectionView.swift
 │   ├── FavoritesManagementView.swift
-│   └── ToneTrainerView.swift
+│   ├── TransitStopsManagementView.swift
+│   ├── UserProfileSetupView.swift
+│   ├── LLMSettingsView.swift
+│   └── DEVELOPING.md                  # Developer guide for adding actions
 │
 ├── Stores/
 │   ├── FavoriteContactsStore.swift    # Favorite contacts state
-│   └── ToneProfileStore.swift         # Tone profile state
+│   ├── TransitStopsStore.swift        # Saved transit stops state
+│   └── UserProfileStore.swift         # User profile information state
 │
+├── AppConfig.plist                    # Configuration file (non-sensitive)
 └── Assets.xcassets/                   # App icons and colors
     ├── AccentColor.colorset/
     ├── AppIcon.appiconset/
