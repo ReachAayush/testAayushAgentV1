@@ -84,6 +84,16 @@ enum ActionRegistry {
             buildView: { agent, _ in
                 AnyView(RestaurantReservationView(agent: agent, locationClient: LocationClient()))
             }
+        )),
+        AnyHomeAction(item: HomeActionItem(
+            id: "stockRecommendation",
+            icon: "chart.line.uptrend.xyaxis",
+            title: "Stock Recommendations",
+            subtitle: "AI-powered investment insights",
+            gradientColors: [Color.blue.opacity(0.8), SteelersTheme.steelersGold],
+            buildView: { agent, _ in
+                AnyView(StockRecommendationView(agent: agent))
+            }
         ))
     ]
 }

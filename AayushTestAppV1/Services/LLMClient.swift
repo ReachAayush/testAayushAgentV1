@@ -51,6 +51,55 @@ struct LLMMessagePayload: Decodable {
     let debug: String?
 }
 
+// MARK: - Unified Message Type
+
+/// Represents a message in the LLM conversation.
+/// Provides type-safe conversion to API format.
+enum LLMMessageRole: String {
+    case system, user, assistant, tool
+}
+
+struct LLMMessage {
+    let role: LLMMessageRole
+    let content: String?
+    let toolCallId: String?
+    let toolCalls: [[String: Any]]?
+    
+    init(role: LLMMessageRole, content: String?, toolCallId: String? = nil, toolCalls: [[String: Any]]? = nil) {
+        self.role = role
+        self.content = content
+        self.toolCallId = toolCallId
+        self.toolCalls = toolCalls
+    }
+    
+    /// Converts to simple API format (for basic requests)
+    func toSimpleDict() -> [String: String]? {
+        guard let content = content else { return nil }
+        return ["role": role.rawValue, "content": content]
+    }
+    
+    /// Converts to full API format (for tool-enabled requests)
+    func toAPIDict() -> [String: Any] {
+        var dict: [String: Any] = ["role": role.rawValue]
+        
+        if let content = content, !content.isEmpty {
+            dict["content"] = content
+        } else if toolCalls == nil {
+            dict["content"] = NSNull()
+        }
+        
+        if let toolCallId = toolCallId {
+            dict["tool_call_id"] = toolCallId
+        }
+        
+        if let toolCalls = toolCalls {
+            dict["tool_calls"] = toolCalls
+        }
+        
+        return dict
+    }
+}
+
 // MARK: - Client
 
 final class LLMClient {
@@ -91,6 +140,169 @@ final class LLMClient {
         self.awsRegion = awsRegion
     }
     
+    // MARK: - Reusable Infrastructure Methods
+    
+    /// Builds a URLRequest for the chat completions endpoint.
+    ///
+    /// - Parameters:
+    ///   - messages: Array of messages in simple format [[String: String]]
+    ///   - tools: Optional tool definitions for function calling
+    /// - Returns: Configured URLRequest ready for authentication
+    /// - Throws: Encoding errors if request body cannot be created
+    private func buildRequest(
+        messages: [[String: String]],
+        tools: [[String: Any]]? = nil
+    ) throws -> URLRequest {
+        var requestBody: [String: Any] = [
+            "model": model,
+            "messages": messages
+        ]
+        
+        if let tools = tools, !tools.isEmpty {
+            requestBody["tools"] = tools
+            requestBody["tool_choice"] = "auto"
+        }
+        
+        let url = baseURL.appendingPathComponent("chat/completions")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Encode request body
+        if tools == nil {
+            // Simple case: use Encodable struct
+            let body = LLMRequest(model: model, messages: messages)
+            request.httpBody = try JSONEncoder().encode(body)
+        } else {
+            // Complex case: use JSONSerialization for tools
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        }
+        
+        return request
+    }
+    
+    /// Builds a URLRequest for the chat completions endpoint with tool support.
+    ///
+    /// - Parameters:
+    ///   - messages: Array of messages in full format [[String: Any]]
+    ///   - tools: Optional tool definitions for function calling
+    /// - Returns: Configured URLRequest ready for authentication
+    /// - Throws: Encoding errors if request body cannot be created
+    private func buildRequestWithTools(
+        messages: [[String: Any]],
+        tools: [[String: Any]]? = nil
+    ) throws -> URLRequest {
+        var requestBody: [String: Any] = [
+            "model": model,
+            "messages": messages
+        ]
+        
+        if let tools = tools, !tools.isEmpty {
+            requestBody["tools"] = tools
+            requestBody["tool_choice"] = "auto"
+        }
+        
+        let url = baseURL.appendingPathComponent("chat/completions")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        return request
+    }
+    
+    /// Authenticates a URLRequest using either SigV4 signing or Bearer token.
+    ///
+    /// - Parameter request: The request to authenticate (modified in place)
+    /// - Throws: `AppError.authenticationFailed` if no valid credentials are available
+    private func authenticateRequest(_ request: inout URLRequest) throws {
+        // Use SigV4 signing if AWS credentials are provided
+        if let accessKey = awsAccessKey,
+           let secretKey = awsSecretKey,
+           let region = awsRegion {
+            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
+            request = try signer.sign(request)
+        } else if !apiKey.isEmpty {
+            // Fallback to Bearer token
+            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        } else {
+            throw AppError.authenticationFailed(
+                reason: "Either AWS credentials (access key, secret key, region) or API key must be provided"
+            )
+        }
+    }
+    
+    /// Executes a URLRequest and validates the HTTP response.
+    ///
+    /// - Parameter request: The authenticated request to execute
+    /// - Returns: Response data if successful
+    /// - Throws: `AppError` for HTTP errors or invalid responses
+    private func executeRequest(_ request: URLRequest) async throws -> Data {
+        let (data, response) = try await session.data(for: request)
+        
+        guard let http = response as? HTTPURLResponse else {
+            logger.error("Invalid HTTP response", category: .llm)
+            throw AppError.invalidResponse(underlying: nil)
+        }
+        
+        guard (200..<300).contains(http.statusCode) else {
+            let errorType = http.statusCode >= 500 ? "http_5xx" : "http_4xx"
+            logger.debug("LLM request failed: statusCode=\(http.statusCode), errorType=\(errorType)", category: .llm)
+            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
+            logger.error("HTTP error \(http.statusCode): \(raw)", category: .llm)
+            throw AppError.httpError(statusCode: http.statusCode, message: raw)
+        }
+        
+        logger.debug("LLM request succeeded: statusCode=\(http.statusCode)", category: .llm)
+        return data
+    }
+    
+    /// Parses LLMResponse from response data.
+    ///
+    /// - Parameter data: Response data from the API
+    /// - Returns: Decoded LLMResponse
+    /// - Throws: Decoding errors if response cannot be parsed
+    private func parseResponse(_ data: Data) throws -> LLMResponse {
+        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
+        logger.debug("LLM response parsed successfully", category: .llm)
+        return decoded
+    }
+    
+    /// Executes a complete LLM request: build → authenticate → execute → parse.
+    ///
+    /// - Parameters:
+    ///   - messages: Array of messages in simple format
+    ///   - tools: Optional tool definitions
+    /// - Returns: Decoded LLMResponse
+    /// - Throws: Various AppErrors for authentication, network, or parsing failures
+    private func performRequest(
+        messages: [[String: String]],
+        tools: [[String: Any]]? = nil
+    ) async throws -> LLMResponse {
+        var request = try buildRequest(messages: messages, tools: tools)
+        try authenticateRequest(&request)
+        let data = try await executeRequest(request)
+        return try parseResponse(data)
+    }
+    
+    /// Executes a complete LLM request with tool support: build → authenticate → execute → parse.
+    ///
+    /// - Parameters:
+    ///   - messages: Array of messages in full format (supports tool calls)
+    ///   - tools: Optional tool definitions
+    /// - Returns: Response data for manual parsing (needed for tool call extraction)
+    /// - Throws: Various AppErrors for authentication, network failures
+    private func performRequestWithTools(
+        messages: [[String: Any]],
+        tools: [[String: Any]]? = nil
+    ) async throws -> Data {
+        var request = try buildRequestWithTools(messages: messages, tools: tools)
+        try authenticateRequest(&request)
+        return try await executeRequest(request)
+    }
+    
+    // MARK: - Public API Methods
+    
     /// Generates a hello message with time-of-day awareness and a debug payload using a strict JSON schema.
     func generateHelloMessagePayload(
         to name: String,
@@ -110,85 +322,50 @@ final class LLMClient {
         \(styleHint ?? "")
         """
         
-        let body = LLMRequest(
-            model: model,
-            messages: [
-                [
-                    "role": "system",
-                    "content": "You write concise, single-message, natural-sounding text messages that feel personal and warm. No lists or multiple options."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
+        let messages: [[String: String]] = [
+            [
+                "role": "system",
+                "content": "You write concise, single-message, natural-sounding text messages that feel personal and warm. No lists or multiple options."
+            ],
+            [
+                "role": "user",
+                "content": prompt
             ]
-        )
+        ]
         
-        // Bedrock OpenAI-compatible Chat Completions endpoint:
-        // POST {baseURL}/chat/completions
-        let url = baseURL.appendingPathComponent("chat/completions")
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-        
-        // Use SigV4 signing if AWS credentials are provided, otherwise use Bearer token
-        if let accessKey = awsAccessKey,
-           let secretKey = awsSecretKey,
-           let region = awsRegion {
-            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
-            request = try signer.sign(request)
-        } else if !apiKey.isEmpty {
-            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        } else {
-            throw NSError(
-                domain: "LLMClient",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Either AWS credentials (access key, secret key, region) or API key must be provided"]
-            )
-        }
-        
-        let (data, response) = try await session.data(for: request)
-        
-        guard let http = response as? HTTPURLResponse else {
-            logger.error("Invalid HTTP response", category: .llm)
-            throw AppError.invalidResponse(underlying: nil)
-        }
-        
-        guard (200..<300).contains(http.statusCode) else {
-            // TODO: OPERATIONAL METRICS - Track HTTP error rates
-            // Metrics to emit:
-            // - llm.request.failure (counter) - increment on failure
-            // - llm.request.error.type (counter) - error type (http_4xx, http_5xx, network, etc.)
-            // - llm.request.error.status_code (counter) - specific HTTP status code
-            // For now: logger.debug("LLM request failed: statusCode=\(http.statusCode), errorType=http_\(http.statusCode/100)xx", category: .llm)
-            let errorType = http.statusCode >= 500 ? "http_5xx" : "http_4xx"
-            logger.debug("LLM request failed: statusCode=\(http.statusCode), errorType=\(errorType)", category: .llm)
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            logger.error("HTTP error \(http.statusCode): \(raw)", category: .llm)
-            throw AppError.httpError(statusCode: http.statusCode, message: raw)
-        }
-        
-        // TODO: OPERATIONAL METRICS - Track successful request metrics
-        // Metrics to emit:
-        // - llm.request.success (counter) - increment on success
-        // - llm.response.tokens (histogram) - if available in response headers/metadata
-        // - llm.response.length (histogram) - length of generated message
-        // For now: logger.debug("LLM request succeeded: statusCode=\(http.statusCode)", category: .llm)
-        logger.debug("LLM request succeeded: statusCode=\(http.statusCode)", category: .llm)
-        
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        let raw = decoded.choices.first?.message.content ?? ""
+        // Execute request using reusable infrastructure
+        let response = try await performRequest(messages: messages)
+        let raw = response.choices.first?.message.content ?? ""
         let sanitized = sanitizeSingleMessage(raw)
         
-        // TODO: OPERATIONAL METRICS - Track response characteristics
-        // Metrics to emit:
-        // - llm.response.length (histogram) - length of final message
-        // For now: logger.debug("LLM response processed: messageLength=\(sanitized.count) chars", category: .llm)
         logger.debug("LLM response processed: messageLength=\(sanitized.count) chars", category: .llm)
-        
         return sanitized
+    }
+    
+    /// Generates a text response from the LLM with a custom prompt.
+    ///
+    /// - Parameters:
+    ///   - systemPrompt: Optional system prompt to set the context
+    ///   - userPrompt: The user's prompt/question
+    /// - Returns: The LLM's response text
+    /// - Throws: Errors from LLM API or network issues
+    func generateText(
+        systemPrompt: String? = nil,
+        userPrompt: String
+    ) async throws -> String {
+        // Build messages array
+        var messages: [[String: String]] = []
+        if let systemPrompt = systemPrompt {
+            messages.append(["role": "system", "content": systemPrompt])
+        }
+        messages.append(["role": "user", "content": userPrompt])
+        
+        // Execute request using reusable infrastructure
+        let response = try await performRequest(messages: messages)
+        let raw = response.choices.first?.message.content ?? ""
+        
+        logger.debug("LLM response processed: messageLength=\(raw.count) chars", category: .llm)
+        return raw
     }
     
     /// Generates a hello message with time-of-day awareness and a debug payload using a strict JSON schema.
@@ -243,81 +420,21 @@ final class LLMClient {
         \(contextBlock)
         """
 
-        let body = LLMRequest(
-            model: model,
-            messages: [
-                [
-                    "role": "system",
-                    "content": "Respond only with a single JSON object: {\"version\":1,\"message\":\"...\",\"debug\":\"...\"}. No other text, no code fences, no explanations."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
+        let messages: [[String: String]] = [
+            [
+                "role": "system",
+                "content": "Respond only with a single JSON object: {\"version\":1,\"message\":\"...\",\"debug\":\"...\"}. No other text, no code fences, no explanations."
+            ],
+            [
+                "role": "user",
+                "content": prompt
             ]
-        )
-
-        let url = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        // Use SigV4 signing if AWS credentials are provided, otherwise use Bearer token
-        if let accessKey = awsAccessKey,
-           let secretKey = awsSecretKey,
-           let region = awsRegion {
-            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
-            request = try signer.sign(request)
-        } else if !apiKey.isEmpty {
-            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        } else {
-            throw NSError(
-                domain: "LLMClient",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Either AWS credentials (access key, secret key, region) or API key must be provided"]
-            )
-        }
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            // TODO: OPERATIONAL METRICS - Track invalid response errors
-            // Metrics to emit:
-            // - llm.request.failure (counter) - increment on failure
-            // - llm.request.error.type (counter) - error type (invalid_response)
-            // For now: logger.debug("LLM request failed: errorType=invalid_response", category: .llm)
-            logger.debug("LLM request failed: errorType=invalid_response", category: .llm)
-            logger.error("Invalid HTTP response", category: .llm)
-            throw AppError.invalidResponse(underlying: nil)
-        }
+        ]
         
-        guard (200..<300).contains(http.statusCode) else {
-            // TODO: OPERATIONAL METRICS - Track HTTP error rates
-            // Metrics to emit:
-            // - llm.request.failure (counter) - increment on failure
-            // - llm.request.error.type (counter) - error type (http_4xx, http_5xx)
-            // - llm.request.error.status_code (counter) - specific HTTP status code
-            // For now: logger.debug("LLM request failed: statusCode=\(http.statusCode), errorType=http_\(http.statusCode/100)xx", category: .llm)
-            let errorType = http.statusCode >= 500 ? "http_5xx" : "http_4xx"
-            logger.debug("LLM request failed: statusCode=\(http.statusCode), errorType=\(errorType)", category: .llm)
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            logger.error("HTTP error \(http.statusCode): \(raw)", category: .llm)
-            throw AppError.httpError(statusCode: http.statusCode, message: raw)
-        }
+        // Execute request using reusable infrastructure
+        let response = try await performRequest(messages: messages)
+        let content = response.choices.first?.message.content ?? ""
         
-        // TODO: OPERATIONAL METRICS - Track successful request
-        // Metrics to emit:
-        // - llm.request.success (counter) - increment on success
-        // For now: logger.debug("LLM request succeeded: statusCode=\(http.statusCode)", category: .llm)
-        logger.debug("LLM request succeeded: statusCode=\(http.statusCode)", category: .llm)
-        
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        let content = decoded.choices.first?.message.content ?? ""
-        
-        // TODO: OPERATIONAL METRICS - Track response characteristics
-        // Metrics to emit:
-        // - llm.response.length (histogram) - length of generated content
-        // For now: logger.debug("LLM response processed: contentLength=\(content.count) chars", category: .llm)
         logger.debug("LLM response processed: contentLength=\(content.count) chars", category: .llm)
         if let jsonText = firstJSONObjectString(in: content), let payloadData = jsonText.data(using: .utf8) {
             do {
@@ -576,46 +693,8 @@ final class LLMClient {
             return nil
         }
         
-        // Build request body with tools
-        var requestBody: [String: Any] = [
-            "model": model,
-            "messages": formattedMessages
-        ]
-        
-        if !tools.isEmpty {
-            requestBody["tools"] = tools
-            requestBody["tool_choice"] = "auto"
-        }
-        
-        let url = baseURL.appendingPathComponent("chat/completions")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        
-        // Use SigV4 signing if AWS credentials are provided, otherwise use Bearer token
-        if let accessKey = awsAccessKey,
-           let secretKey = awsSecretKey,
-           let region = awsRegion {
-            let signer = AWSSigV4Signer(accessKey: accessKey, secretKey: secretKey, region: region)
-            request = try signer.sign(request)
-        } else if !apiKey.isEmpty {
-            request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        } else {
-            throw AppError.authenticationFailed(reason: "Either AWS credentials or API key must be provided")
-        }
-        
-        let (data, response) = try await session.data(for: request)
-        
-        guard let http = response as? HTTPURLResponse else {
-            throw AppError.invalidResponse(underlying: nil)
-        }
-        
-        guard (200..<300).contains(http.statusCode) else {
-            let raw = String(data: data, encoding: .utf8) ?? "<no body>"
-            logger.error("HTTP error \(http.statusCode): \(raw)", category: .llm)
-            throw AppError.httpError(statusCode: http.statusCode, message: raw)
-        }
+        // Execute request using reusable infrastructure
+        let data = try await performRequestWithTools(messages: formattedMessages, tools: tools)
         
         // Parse response
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
