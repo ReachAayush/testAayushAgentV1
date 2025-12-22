@@ -36,7 +36,7 @@ struct LLMResponse: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
             let role: String
-            let content: String
+            let content: String?  // Optional to handle cases where content might be null (e.g., with response_format: json_object)
         }
         
         let message: Message
@@ -108,6 +108,20 @@ final class LLMClient {
     private let model: String
     private let session: URLSession
     private let logger = LoggingService.shared
+
+    enum ResponseFormatOption {
+        case jsonObject
+        case none
+
+        var payload: [String: Any]? {
+            switch self {
+            case .jsonObject:
+                return ["type": "json_object"]
+            case .none:
+                return nil
+            }
+        }
+    }
     
     // AWS credentials for SigV4 signing (optional - if provided, will use SigV4 instead of Bearer token)
     private let awsAccessKey: String?
@@ -210,6 +224,71 @@ final class LLMClient {
         
         return request
     }
+
+    /// Builds a raw URLRequest for chat completions with arbitrary body keys.
+    private func buildRawRequest(body: [String: Any]) throws -> URLRequest {
+        let url = baseURL.appendingPathComponent("chat/completions")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    /// Advanced text generation with optional temperature, max tokens, and response_format.
+    /// Falls back to basic generation on HTTP 4xx errors that may indicate unsupported keys.
+    func generateTextAdvanced(
+        systemPrompt: String? = nil,
+        userPrompt: String,
+        temperature: Double? = nil,
+        maxTokens: Int? = nil,
+        responseFormat: ResponseFormatOption = .none
+    ) async throws -> String {
+        var messages: [[String: String]] = []
+        if let systemPrompt = systemPrompt { messages.append(["role": "system", "content": systemPrompt]) }
+        messages.append(["role": "user", "content": userPrompt])
+
+        var body: [String: Any] = [
+            "model": model,
+            "messages": messages
+        ]
+        if let temperature = temperature { body["temperature"] = temperature }
+        if let maxTokens = maxTokens { body["max_tokens"] = maxTokens }
+        if let rf = responseFormat.payload { body["response_format"] = rf }
+
+        do {
+            var request = try buildRawRequest(body: body)
+            try authenticateRequest(&request)
+            let data = try await executeRequest(request)
+            
+            // Try to parse the response
+            do {
+                let decoded = try parseResponse(data)
+                let raw = decoded.choices.first?.message.content ?? ""
+                logger.debug("LLM response processed (advanced): messageLength=\(raw.count) chars", category: .llm)
+                return raw
+            } catch let parseError {
+                // If parsing fails, try to extract content directly from JSON
+                logger.warning("Failed to parse structured response, attempting manual extraction. Error=\(parseError.localizedDescription)", category: .llm)
+                
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let content = message["content"] as? String {
+                    logger.debug("Successfully extracted content from raw JSON: messageLength=\(content.count) chars", category: .llm)
+                    return content
+                }
+                
+                // If manual extraction also fails, rethrow the original parse error
+                throw parseError
+            }
+        } catch {
+            // If the provider rejects unsupported keys (e.g., response_format), retry without advanced options
+            logger.warning("Advanced LLM request failed; retrying with basic generateText. Error=\(error.localizedDescription)", category: .llm)
+            return try await generateText(systemPrompt: systemPrompt, userPrompt: userPrompt)
+        }
+    }
     
     /// Authenticates a URLRequest using either SigV4 signing or Bearer token.
     ///
@@ -263,9 +342,19 @@ final class LLMClient {
     /// - Returns: Decoded LLMResponse
     /// - Throws: Decoding errors if response cannot be parsed
     private func parseResponse(_ data: Data) throws -> LLMResponse {
-        let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
-        logger.debug("LLM response parsed successfully", category: .llm)
-        return decoded
+        do {
+            let decoded = try JSONDecoder().decode(LLMResponse.self, from: data)
+            logger.debug("LLM response parsed successfully", category: .llm)
+            return decoded
+        } catch {
+            // Log the raw response for debugging
+            if let responseString = String(data: data, encoding: .utf8) {
+                logger.error("Failed to parse LLM response. Raw response (first 1000 chars): \(String(responseString.prefix(1000)))", category: .llm)
+            } else {
+                logger.error("Failed to parse LLM response. Data length: \(data.count) bytes", category: .llm)
+            }
+            throw error
+        }
     }
     
     /// Executes a complete LLM request: build → authenticate → execute → parse.
@@ -754,6 +843,3 @@ struct LLMToolCall {
     let name: String
     let arguments: String // JSON string
 }
-
-
-

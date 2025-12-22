@@ -29,6 +29,9 @@ enum AppError: LocalizedError {
     /// Invalid or malformed response from server
     case invalidResponse(underlying: Error?)
     
+    /// Operation timed out
+    case timeout
+    
     // MARK: - Authentication Errors
     
     /// Missing or invalid credentials
@@ -94,6 +97,8 @@ enum AppError: LocalizedError {
             return message ?? "HTTP error: \(statusCode)"
         case .invalidResponse(let underlying):
             return "Invalid response: \(underlying?.localizedDescription ?? "Unknown error")"
+        case .timeout:
+            return "Operation timed out"
             
         // Authentication
         case .authenticationFailed(let reason):
@@ -150,6 +155,8 @@ enum AppError: LocalizedError {
             } else {
                 return "Request failed. Please try again."
             }
+        case .timeout:
+            return "The request took too long. Please try again."
         case .authenticationFailed:
             return "Authentication failed. Please check your credentials in Settings."
         case .calendarAccessDenied:
@@ -220,3 +227,4 @@ extension AppError {
         return .unknown(underlying: error)
     }
 }
+

@@ -71,6 +71,12 @@ struct ContentView: View {
             logger.warning("Missing required configuration: \(missing.map { $0.rawValue }.joined(separator: ", "))", category: .config)
         }
 
+        // Create URLSession with extended timeout for LLM requests
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = 180.0 // 3 minutes
+        sessionConfig.timeoutIntervalForResource = 300.0 // 5 minutes
+        let llmSession = URLSession(configuration: sessionConfig)
+        
         // Create base URL
         guard let bedrockBaseURL = URL(string: bedrockBaseURLString) else {
             logger.error("Invalid BEDROCK_BASE_URL: \(bedrockBaseURLString)", category: .config)
@@ -80,6 +86,7 @@ struct ContentView: View {
                 apiKey: bedrockApiKey,
                 baseURL: defaultURL,
                 model: bedrockModelId,
+                session: llmSession,
                 awsAccessKey: awsAccessKey.isEmpty ? nil : awsAccessKey,
                 awsSecretKey: awsSecretKey.isEmpty ? nil : awsSecretKey,
                 awsRegion: awsRegion.isEmpty ? nil : awsRegion
@@ -99,11 +106,12 @@ struct ContentView: View {
             return
         }
 
-        // Create LLM client with configuration
+        // Create LLM client with configuration and extended timeout session
         let llm = LLMClient(
             apiKey: bedrockApiKey,
             baseURL: bedrockBaseURL,
             model: bedrockModelId,
+            session: llmSession,
             awsAccessKey: awsAccessKey.isEmpty ? nil : awsAccessKey,
             awsSecretKey: awsSecretKey.isEmpty ? nil : awsSecretKey,
             awsRegion: awsRegion.isEmpty ? nil : awsRegion
@@ -198,10 +206,17 @@ struct ContentView: View {
             return
         }
         
+        // Create URLSession with extended timeout for LLM requests
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.timeoutIntervalForRequest = 180.0 // 3 minutes
+        sessionConfig.timeoutIntervalForResource = 300.0 // 5 minutes
+        let llmSession = URLSession(configuration: sessionConfig)
+        
         agent.llmClient = LLMClient(
             apiKey: apiKey,
             baseURL: url,
             model: modelId,
+            session: llmSession,
             awsAccessKey: awsAccessKey.isEmpty ? nil : awsAccessKey,
             awsSecretKey: awsSecretKey.isEmpty ? nil : awsSecretKey,
             awsRegion: awsRegion.isEmpty ? nil : awsRegion

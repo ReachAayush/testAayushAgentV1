@@ -354,3 +354,5 @@ struct StockRecommendation: Identifiable {
     )
     return StockRecommendationView(agent: agent)
 }
+
+

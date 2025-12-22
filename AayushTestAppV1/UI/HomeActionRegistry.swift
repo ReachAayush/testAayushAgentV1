@@ -94,6 +94,16 @@ enum ActionRegistry {
             buildView: { agent, _ in
                 AnyView(StockRecommendationView(agent: agent))
             }
+        )),
+        AnyHomeAction(item: HomeActionItem(
+            id: "nflMatchups",
+            icon: "sportscourt.fill",
+            title: "This Week's NFL Matchups",
+            subtitle: "AI predictions & analysis",
+            gradientColors: [Color.orange.opacity(0.8), SteelersTheme.steelersGold],
+            buildView: { agent, _ in
+                AnyView(NFLMatchupsView(agent: agent))
+            }
         ))
     ]
 }

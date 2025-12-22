@@ -155,3 +155,5 @@ private func parseResponse(_ data: Data) throws -> LLMResponse
 - ✅ **Linter Clean**: No errors or warnings
 - ⚠️ **Testing**: Should add unit tests for new private methods (recommended but not blocking)
 - ✅ **Rollback**: Easy to revert if issues found (all changes are additive + refactoring)
+
+
